@@ -4,3 +4,4 @@ libs/
 .vscode/
 build/
 dist/
+release/
