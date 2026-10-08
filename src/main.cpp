@@ -75,6 +75,7 @@ static const UINT_PTR TIMER_ID = 1;
 
 // ---- tray / lifecycle
 static const UINT WM_TRAY = WM_APP + 1;
+static double g_dpiScale = 1.0; // screen DPI / 96, used for the minimum window size
 static const UINT TRAY_UID = 1;
 enum
 {
@@ -1562,6 +1563,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg)
     {
+    case WM_GETMINMAXINFO:
+    { // the window can be resized / maximized, but not smaller than the UI needs
+        MINMAXINFO *mm = reinterpret_cast<MINMAXINFO *>(lp);
+        RECT minRc = {0, 0, (LONG)(680 * g_dpiScale), (LONG)(420 * g_dpiScale)};
+        AdjustWindowRect(&minRc, WS_OVERLAPPEDWINDOW, FALSE);
+        mm->ptMinTrackSize.x = minRc.right - minRc.left;
+        mm->ptMinTrackSize.y = minRc.bottom - minRc.top;
+        return 0;
+    }
     case WM_SIZE:
         if (wp == SIZE_MINIMIZED)
         {
@@ -1733,14 +1743,15 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow)
     if (!g_trayIconOff)
         g_trayIconOff = g_trayIconOn;
 
-    // 700x640 CSS pixels, scaled for the screen DPI and limited to the visible work area.
+    // 700x720 CSS pixels, scaled for the screen DPI and limited to the visible work area.
     HDC dc = GetDC(nullptr);
     const int dpi = GetDeviceCaps(dc, LOGPIXELSX);
     ReleaseDC(nullptr, dc);
     const double scale = dpi / 96.0;
+    g_dpiScale = scale;
 
-    const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    RECT r = {0, 0, (LONG)(700 * scale), (LONG)(640 * scale)};
+    const DWORD style = WS_OVERLAPPEDWINDOW; // resizable, with minimize + maximize buttons
+    RECT r = {0, 0, (LONG)(700 * scale), (LONG)(720 * scale)};
     AdjustWindowRect(&r, style, FALSE);
     int w = r.right - r.left;
     int h = r.bottom - r.top;

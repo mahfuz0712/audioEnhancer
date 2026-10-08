@@ -1762,3 +1762,49 @@ footer {
 
     font-size: 10px;
 }
+
+/* =========================================================
+   SCROLLBARS
+   Slim, rounded "Windows 11 style" scrollbars that follow the active theme:
+   the thumb uses the theme's secondary text colour, and turns into the accent colour while dragging.
+   (Applies to the page and to the dropdown menus.)
+========================================================= */
+::-webkit-scrollbar {
+    width: 14px;
+    height: 14px;
+    background: transparent;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    min-height: 48px;
+    border: 5px solid transparent;           /* makes the visible bar slim (4px)   */
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: rgba(128, 128, 128, 0.45);                       /* fallback */
+    background-color: color-mix(in srgb, var(--sub) 45%, transparent);
+}
+
+::-webkit-scrollbar-thumb:hover {
+    border-width: 3px;                        /* grows to 8px when hovered           */
+    background-color: rgba(128, 128, 128, 0.75);                       /* fallback */
+    background-color: color-mix(in srgb, var(--sub) 80%, transparent);
+}
+
+::-webkit-scrollbar-thumb:active {
+    border-width: 3px;
+    background-color: var(--accent);
+}
+
+::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
