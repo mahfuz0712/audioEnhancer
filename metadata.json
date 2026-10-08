@@ -1,0 +1,11 @@
+{
+    "name": "Audio Enhancer",
+    "description": "A tool for enhancing audio quality",
+    "category": "Utilities",
+    "ageRating": "3+",
+    "author": "Mohammad Mahfuz Rahman",
+    "type": "app",
+    "isPaid": false,
+    "containsAds": false,
+    "license": "Proprietary"
+}

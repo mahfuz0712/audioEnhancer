@@ -1,0 +1,13 @@
+#include <windows.h>
+
+// Run windres from the project root (the Makefile does this).
+1 24 "src/setup.manifest"
+1 ICON "assets/app.ico"
+
+// Payload embedded in the installer
+101 RCDATA "dist/AudioEnhancer.exe"
+102 RCDATA "libs/WebView2Loader.dll"
+103 RCDATA "ui/index.html"
+104 RCDATA "ui/style.css"
+105 RCDATA "ui/script.js"
+106 RCDATA "ui/icon.png"

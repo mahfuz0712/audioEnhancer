@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Audio Enhancer</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <div class="app">
+
+        <!-- Main Content -->
+        <main>
+
+            <div class="header">
+                <div class="app-icon">
+                    <img src="icon.png" alt="">
+                </div>
+
+                <div>
+                    <h1>Audio Enhancer</h1>
+                    <p>Configure your audio experience</p>
+                </div>
+            </div>
+
+
+            <!-- Settings Card -->
+            <section class="settings-card">
+
+                <!-- Audio Output -->
+                <div class="setting">
+
+                    <div class="setting-info">
+                        <div class="setting-icon speaker">
+                            <span>🔊</span>
+                        </div>
+
+                        <div>
+                            <h2>Audio Output</h2>
+                            <p>Select where your audio should play</p>
+                        </div>
+                    </div>
+
+                    <div class="custom-select" id="outputSelect">
+
+                        <button class="select-button">
+                            <span id="outputValue">Detecting devices…</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+
+                        <!-- filled by updateAudioDevices() -->
+                        <div class="dropdown-menu"></div>
+                    </div>
+
+                </div>
+
+
+                <div class="divider"></div>
+
+
+                <!-- Audio Effect -->
+                <div class="setting">
+
+                    <div class="setting-info">
+
+                        <div class="setting-icon effect">
+                            <span>◉</span>
+                        </div>
+
+                        <div>
+                            <h2>Audio Effect</h2>
+                            <p>Choose your preferred sound profile</p>
+                        </div>
+
+                    </div>
+
+
+                    <div class="custom-select" id="effectSelect">
+
+                        <button class="select-button">
+                            <span id="effectValue">Normal</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+
+
+                        <div class="dropdown-menu">
+
+                            <div class="dropdown-item active" data-value="Normal">
+                                <div>
+                                    <strong>Normal</strong>
+                                    <small>Natural sound</small>
+                                </div>
+                                <span class="check">✓</span>
+                            </div>
+
+                            <div class="dropdown-item" data-value="3D">
+                                <div>
+                                    <strong>3D</strong>
+                                    <small>Immersive spatial sound</small>
+                                </div>
+                                <span class="check">✓</span>
+                            </div>
+
+                            <div class="dropdown-item" data-value="Balanced">
+                                <div>
+                                    <strong>Balanced</strong>
+                                    <small>Enhanced balanced audio</small>
+                                </div>
+                                <span class="check">✓</span>
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- Current Status + Power -->
+            <section class="status-card">
+
+                <div class="status-left">
+
+                    <div class="status-indicator idle" id="statusDot"></div>
+
+                    <div class="status-text">
+                        <span class="status-title" id="statusTitle">Starting…</span>
+                        <span class="status-description" id="statusText">Please wait</span>
+                    </div>
+
+                </div>
+
+                <label class="switch" title="Turn Audio Enhancer on / off">
+                    <input type="checkbox" id="powerToggle">
+                    <span class="slider"></span>
+                </label>
+
+            </section>
+
+        </main>
+
+
+        <!-- Footer -->
+        <footer>
+            <span>Audio Enhancer</span>
+            <span>v1.0.0</span>
+        </footer>
+
+    </div>
+
+
+    <script src="script.js"></script>
+
+</body>
+</html>
