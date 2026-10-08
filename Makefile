@@ -19,7 +19,7 @@ HEADERS  := $(wildcard src/headers/*.h)
 
 CXXFLAGS := -std=c++17 -O2 -Wall -Wextra -Wno-unknown-pragmas -DUNICODE -D_UNICODE -Isrc/headers
 LDFLAGS  := -mwindows -static -static-libgcc -static-libstdc++
-LDLIBS   := -lole32 -loleaut32 -luuid -lwinmm -lgdi32 -luser32
+LDLIBS   := -lole32 -loleaut32 -luuid -lwinmm -lgdi32 -luser32 -lshell32 -ladvapi32
 SETUPLIBS := -lole32 -loleaut32 -luuid -lwinmm -lcomctl32 -lurlmon -lshell32 -ladvapi32 -luser32 -lgdi32
 
 # Use ">" instead of TAB for recipe lines
@@ -38,7 +38,7 @@ build/%.o: src/%.cpp $(HEADERS)
 > $(CXX) $(CXXFLAGS) -c $< -o $@
 
 # App icon resource (src/app.rc -> build/app_res.o)
-build/app_res.o: src/app.rc assets/app.ico
+build/app_res.o: src/app.rc assets/app.ico assets/app_off.ico
 > @mkdir -p build
 > $(WINDRES) -i src/app.rc -O coff -o $@
 

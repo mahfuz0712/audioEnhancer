@@ -2,3 +2,6 @@
 
 // Application icon (used by Explorer, taskbar, window title bar)
 1 ICON "assets/app.ico"
+
+// Dimmed icon used by the system tray while the enhancer is off
+2 ICON "assets/app_off.ico"

@@ -9,12 +9,21 @@
 //   * Power OFF -> engine stops and the previous Windows default output is restored.
 //   * Settings are saved to %LOCALAPPDATA%\AudioEnhancer\settings.ini
 //
+// Tray:   minimize and the X button hide the window into the system tray (the engine keeps running).
+//         Left-click the tray icon = open, right-click = menu (Open / Enable / Effect / Start with Windows / Exit).
+//         "Exit" in the tray menu is the only way to quit. Start hidden with:  AudioEnhancer.exe --tray
+//
 // JS -> C++ (strings):  "ready"  "output|<deviceId>"  "effect|<Normal|3D|Balanced>"  "power|<1|0>"
 //                       "volume|<0..100>"  "bass|<-10..10>"  "treble|<-10..10>"
 // C++ -> JS (JSON):     {"type":"devices",...}  {"type":"state",...}  {"type":"power","value":bool}
 //                       {"type":"status",...}
 
 #include <windows.h>
+#include <shellapi.h>
+
+#ifndef ENDSESSION_CLOSEAPP
+#define ENDSESSION_CLOSEAPP 0x00000001
+#endif
 
 #include <cstdlib>
 #include <string>
@@ -43,6 +52,32 @@ static bool g_booted = false;
 static bool g_dirty = false; // settings changed -> save on next timer tick
 
 static const UINT_PTR TIMER_ID = 1;
+
+// ---- tray / lifecycle
+static const UINT WM_TRAY = WM_APP + 1;
+static const UINT TRAY_UID = 1;
+enum
+{
+    ID_TRAY_OPEN = 1001,
+    ID_TRAY_POWER = 1002,
+    ID_TRAY_EFFECT0 = 1010, // 1010..1012 = Normal / 3D / Balanced
+    ID_TRAY_AUTOSTART = 1020,
+    ID_TRAY_EXIT = 1099
+};
+static const wchar_t *kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+static const wchar_t *kRunValue = L"AudioEnhancer";
+
+static UINT g_wmTaskbarCreated = 0;   // Explorer restarted -> re-add the tray icon
+static UINT g_wmShowApp = 0;          // sent by a second instance: "bring the window up"
+static HICON g_trayIconOn = nullptr;  // enhancer running
+static HICON g_trayIconOff = nullptr; // enhancer off (dimmed)
+static HANDLE g_mutex = nullptr;
+static bool g_trayAdded = false;
+static bool g_quitting = false;
+static bool g_startHidden = false;
+static bool g_trayHintShown = false; // the "still running in the tray" balloon is shown only once
+
+static void updateTray(); // defined with the tray code below
 
 // ------------------------------------------------------------------ helpers
 static int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -216,6 +251,7 @@ static void loadSettings()
     wchar_t buf[512] = {};
     GetPrivateProfileStringW(sec, L"Output", L"", buf, 512, p.c_str());
     g_outputId = buf;
+    g_trayHintShown = GetPrivateProfileIntW(L"App", L"TrayHint", 0, p.c_str()) != 0;
 }
 
 static void saveSettings()
@@ -230,6 +266,7 @@ static void saveSettings()
     WritePrivateProfileStringW(sec, L"Treble", std::to_wstring(g_treble + 100).c_str(), p.c_str());
     WritePrivateProfileStringW(sec, L"Power", g_savedPower ? L"1" : L"0", p.c_str());
     WritePrivateProfileStringW(sec, L"Output", g_outputId.c_str(), p.c_str());
+    WritePrivateProfileStringW(L"App", L"TrayHint", g_trayHintShown ? L"1" : L"0", p.c_str());
 }
 
 // ------------------------------------------------------------------ C++ -> JS
@@ -243,6 +280,7 @@ static void postStatus(const wchar_t *state, const std::wstring &title, const st
 {
     postJson(L"{\"type\":\"status\",\"state\":\"" + std::wstring(state) + L"\",\"title\":\"" +
              jsonEsc(title) + L"\",\"text\":\"" + jsonEsc(text) + L"\"}");
+    updateTray(); // keep the tray tooltip in sync with the status
 }
 
 static void postPower()
@@ -444,6 +482,16 @@ static void changeOutput(const std::wstring &id)
     }
 }
 
+// First start of the engine after launch (also used when the app starts hidden in the tray).
+static void bootEngine()
+{
+    if (g_booted)
+        return;
+    g_booted = true;
+    if (g_power && !startEngine())
+        g_power = false;
+}
+
 static void handleMessage(const std::wstring &m)
 {
     const size_t bar = m.find(L'|');
@@ -456,9 +504,7 @@ static void handleMessage(const std::wstring &m)
         refreshDevices(true);
         if (!g_booted)
         {
-            g_booted = true;
-            if (g_power && !startEngine())
-                g_power = false;
+            bootEngine();
         }
         else
         {
@@ -650,12 +696,215 @@ static bool initWebView()
     return true;
 }
 
+// ------------------------------------------------------------------ tray
+static bool isAutostart()
+{
+    return RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, nullptr, nullptr) ==
+           ERROR_SUCCESS;
+}
+
+static void setAutostart(bool on)
+{
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &k) != ERROR_SUCCESS)
+        return;
+    if (on)
+    {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        const std::wstring v = L"\"" + std::wstring(exe) + L"\" --tray";
+        RegSetValueExW(k, kRunValue, 0, REG_SZ, (const BYTE *)v.c_str(), (DWORD)((v.size() + 1) * sizeof(wchar_t)));
+    }
+    else
+    {
+        RegDeleteValueW(k, kRunValue);
+    }
+    RegCloseKey(k);
+}
+
+static void fillTip(NOTIFYICONDATAW &nid)
+{
+    std::wstring tip = L"Audio Enhancer";
+    if (g_running)
+    {
+        tip += L" - Active\n";
+        const AudioDevice *o = findById(g_outputId);
+        if (o)
+        {
+            tip += o->name;
+            tip += L" \u00B7 ";
+        }
+        tip += effectName(g_effect);
+    }
+    else
+    {
+        tip += L" - Off";
+    }
+    lstrcpynW(nid.szTip, tip.c_str(), (int)(sizeof(nid.szTip) / sizeof(wchar_t)));
+}
+
+static bool addTray()
+{
+    if (g_trayAdded || !g_hwnd)
+        return g_trayAdded;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = TRAY_UID;
+    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    nid.uCallbackMessage = WM_TRAY;
+    nid.hIcon = g_running ? g_trayIconOn : g_trayIconOff;
+    fillTip(nid);
+    g_trayAdded = Shell_NotifyIconW(NIM_ADD, &nid) == TRUE;
+    return g_trayAdded;
+}
+
+static void removeTray()
+{
+    if (!g_trayAdded)
+        return;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = TRAY_UID;
+    Shell_NotifyIconW(NIM_DELETE, &nid);
+    g_trayAdded = false;
+}
+
+static void updateTray()
+{
+    if (!g_trayAdded)
+        return;
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = TRAY_UID;
+    nid.uFlags = NIF_TIP | NIF_ICON;
+    nid.hIcon = g_running ? g_trayIconOn : g_trayIconOff; // dimmed icon when off
+    fillTip(nid);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
+static void showTrayHint()
+{
+    NOTIFYICONDATAW nid = {};
+    nid.cbSize = sizeof(nid);
+    nid.hWnd = g_hwnd;
+    nid.uID = TRAY_UID;
+    nid.uFlags = NIF_INFO;
+    nid.dwInfoFlags = NIIF_INFO;
+    lstrcpynW(nid.szInfoTitle, L"Audio Enhancer is still running", 64);
+    lstrcpynW(nid.szInfo, L"Click the tray icon to open it again. Right-click it and choose Exit to quit.", 256);
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
+static void hideToTray()
+{
+    ShowWindow(g_hwnd, SW_HIDE);
+    if (g_ctrl)
+        g_ctrl->put_IsVisible(FALSE); // no rendering while hidden
+    if (!g_trayHintShown)
+    {
+        g_trayHintShown = true;
+        g_dirty = true;
+        showTrayHint();
+    }
+}
+
+static void showMainWindow()
+{
+    ShowWindow(g_hwnd, IsIconic(g_hwnd) ? SW_RESTORE : SW_SHOW);
+    if (g_ctrl)
+        g_ctrl->put_IsVisible(TRUE);
+    SetForegroundWindow(g_hwnd);
+}
+
+static void setEffectFromTray(int e)
+{
+    g_effect = clampInt(e, 0, 2);
+    g_engine.setEffect(g_effect);
+    g_dirty = true;
+    postState(); // update the dropdown in the UI
+    if (g_running)
+        postCurrentStatus();
+}
+
+static void showTrayMenu(HWND hwnd)
+{
+    HMENU menu = CreatePopupMenu();
+    HMENU fx = CreatePopupMenu();
+    for (int i = 0; i < 3; i++)
+        AppendMenuW(fx, MF_STRING, ID_TRAY_EFFECT0 + i, effectName(i));
+    CheckMenuRadioItem(fx, 0, 2, (UINT)g_effect, MF_BYPOSITION);
+
+    AppendMenuW(menu, MF_STRING, ID_TRAY_OPEN, L"Open Audio Enhancer");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (g_power ? MF_CHECKED : 0), ID_TRAY_POWER, L"Enabled");
+    AppendMenuW(menu, MF_POPUP, (UINT_PTR)fx, L"Audio Effect");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (isAutostart() ? MF_CHECKED : 0), ID_TRAY_AUTOSTART, L"Start with Windows");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, ID_TRAY_EXIT, L"Exit");
+    SetMenuDefaultItem(menu, ID_TRAY_OPEN, FALSE);
+
+    POINT pt;
+    GetCursorPos(&pt);
+    SetForegroundWindow(hwnd); // required, otherwise the menu does not close when clicking elsewhere
+    const UINT cmd = (UINT)TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0,
+                                          hwnd, nullptr);
+    PostMessageW(hwnd, WM_NULL, 0, 0);
+    DestroyMenu(menu); // also destroys the submenu
+
+    switch (cmd)
+    {
+    case ID_TRAY_OPEN:
+        showMainWindow();
+        break;
+    case ID_TRAY_POWER:
+        g_savedPower = !g_power;
+        g_dirty = true;
+        setPower(g_savedPower); // also updates the toggle in the UI
+        break;
+    case ID_TRAY_EFFECT0:
+    case ID_TRAY_EFFECT0 + 1:
+    case ID_TRAY_EFFECT0 + 2:
+        setEffectFromTray((int)cmd - ID_TRAY_EFFECT0);
+        break;
+    case ID_TRAY_AUTOSTART:
+        setAutostart(!isAutostart());
+        break;
+    case ID_TRAY_EXIT:
+        g_quitting = true;
+        DestroyWindow(hwnd);
+        break;
+    }
+}
+
 // ------------------------------------------------------------------ window
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    // registered (non-constant) messages
+    if (g_wmTaskbarCreated && msg == g_wmTaskbarCreated)
+    {
+        g_trayAdded = false; // Explorer restarted, the old icon is gone
+        addTray();
+        return 0;
+    }
+    if (g_wmShowApp && msg == g_wmShowApp)
+    {
+        showMainWindow();
+        return 0;
+    }
+
     switch (msg)
     {
     case WM_SIZE:
+        if (wp == SIZE_MINIMIZED)
+        {
+            if (g_trayAdded)
+                hideToTray(); // e.g. "Show desktop" minimized us
+            return 0;
+        }
         if (g_ctrl)
         {
             RECT rc;
@@ -663,7 +912,52 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             g_ctrl->put_Bounds(rc);
         }
         return 0;
+    case WM_SYSCOMMAND:
+        if ((wp & 0xFFF0) == SC_MINIMIZE && g_trayAdded)
+        {
+            hideToTray(); // minimize = go to the tray, no taskbar button
+            return 0;
+        }
+        break;
+    case WM_CLOSE:
+        if (!g_quitting && g_trayAdded)
+        {
+            hideToTray(); // X = go to the tray, Exit is in the tray menu
+            return 0;
+        }
+        break; // no tray -> normal close
+    case WM_TRAY:
+        switch (LOWORD(lp))
+        {
+        case WM_LBUTTONUP:
+            showMainWindow();
+            break;
+        case WM_RBUTTONUP:
+            showTrayMenu(hwnd);
+            break;
+        }
+        return 0;
+    case WM_QUERYENDSESSION:
+        // An installer (Restart Manager) asks us to close for an update: X must really close now, not hide.
+        if (lp & ENDSESSION_CLOSEAPP)
+            g_quitting = true;
+        return TRUE;
+    case WM_ENDSESSION:
+        if (wp)
+        { // Windows is shutting down / logging off / installer update: give the sound device back first
+            saveSettings();
+            stopEngine();
+            removeTray();
+            if (lp & ENDSESSION_CLOSEAPP)
+            { // closed by an installer -> really exit
+                g_quitting = true;
+                DestroyWindow(hwnd);
+            }
+        }
+        return 0;
     case WM_TIMER:
+        if (!g_trayAdded)
+            addTray(); // Explorer was not ready yet (e.g. start with Windows)
         if (g_running && !g_engine.alive())
         { // e.g. Bluetooth headphones disconnected
             g_engine.stop();
@@ -675,6 +969,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                        L"The selected output stopped. Reconnect it and turn the enhancer on.");
         }
         refreshDevices(false); // auto-detect newly connected / removed devices
+        if (g_startHidden && !g_booted)
+            bootEngine(); // hidden start: do not wait for the page to say "ready"
         if (g_dirty)
         {
             saveSettings();
@@ -685,6 +981,7 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         KillTimer(hwnd, TIMER_ID);
         saveSettings();
         stopEngine(); // restores the previous Windows default output
+        removeTray();
         if (g_web)
         {
             g_web->Release();
@@ -704,6 +1001,26 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow)
 {
+    const bool startHidden = wcsstr(GetCommandLineW(), L"--tray") != nullptr;
+
+    // Single instance: the app can sit hidden in the tray, so a second launch must not start another engine.
+    g_wmShowApp = RegisterWindowMessageW(L"AudioEnhancer_ShowWindow");
+    g_mutex = CreateMutexW(nullptr, TRUE, L"Local\\AudioEnhancer_SingleInstance");
+    if (g_mutex && GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        if (!startHidden)
+        { // user launched it again -> bring the running one up
+            AllowSetForegroundWindow(ASFW_ANY);
+            HWND other = FindWindowW(L"AudioEnhancerWnd", nullptr);
+            if (other)
+                PostMessageW(other, g_wmShowApp, 0, 0);
+        }
+        CloseHandle(g_mutex);
+        return 0;
+    }
+    g_startHidden = startHidden;
+    g_wmTaskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+
     SetProcessDPIAware();
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
@@ -721,6 +1038,11 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow)
     wc.hIconSm = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(1), IMAGE_ICON,
                                    GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), 0);
     RegisterClassExW(&wc);
+    g_trayIconOn = wc.hIconSm; // resource 1 = normal icon, resource 2 = dimmed "off" icon (src/app.rc)
+    g_trayIconOff = (HICON)LoadImageW(hInst, MAKEINTRESOURCEW(2), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                      GetSystemMetrics(SM_CYSMICON), 0);
+    if (!g_trayIconOff)
+        g_trayIconOff = g_trayIconOn;
 
     // 700x640 CSS pixels, scaled for the screen DPI and limited to the visible work area.
     HDC dc = GetDC(nullptr);
@@ -745,8 +1067,16 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow)
 
     g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Audio Enhancer", style, x, y, w, h, nullptr, nullptr,
                              hInst, nullptr);
-    ShowWindow(g_hwnd, nShow);
-    UpdateWindow(g_hwnd);
+    addTray(); // if Explorer is not ready yet, the timer / TaskbarCreated adds it later
+    if (g_startHidden)
+    {
+        ShowWindow(g_hwnd, SW_HIDE); // autostart: go straight to the tray
+    }
+    else
+    {
+        ShowWindow(g_hwnd, nShow);
+        UpdateWindow(g_hwnd);
+    }
 
     refreshDevices(false);
     SetTimer(g_hwnd, TIMER_ID, 2500, nullptr);
@@ -761,5 +1091,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int nShow)
         DispatchMessageW(&m);
     }
     CoUninitialize();
+    if (g_mutex)
+        CloseHandle(g_mutex);
     return (int)m.wParam;
 }
