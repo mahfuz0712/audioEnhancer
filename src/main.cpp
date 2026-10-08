@@ -13,6 +13,10 @@
 //         Left-click the tray icon = open, right-click = menu (Open / Enable / Effect / Start with Windows / Exit).
 //         "Exit" in the tray menu is the only way to quit. Start hidden with:  AudioEnhancer.exe --tray
 //
+// Settings page: theme / mode / start-with-Windows / update preferences are stored in settings.ini.
+// Updates:  checks https://github.com/mahfuz0712/audioEnhancer/releases (latest) on start and every 12 hours,
+//           picks the installer for this OS (Windows: .exe), downloads it, verifies the SHA-256 and runs it.
+//
 // JS -> C++ (strings):  "ready"  "output|<deviceId>"  "effect|<Normal|3D|Balanced>"  "power|<1|0>"
 //                       "volume|<0..100>"  "bass|<-10..10>"  "treble|<-10..10>"
 // C++ -> JS (JSON):     {"type":"devices",...}  {"type":"state",...}  {"type":"power","value":bool}
@@ -25,12 +29,28 @@
 #define ENDSESSION_CLOSEAPP 0x00000001
 #endif
 
+#include <winhttp.h>
+#include <bcrypt.h>
+
+#include <atomic>
 #include <cstdlib>
+#include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "WebView2.h"
 #include "audio_engine.h"
+#include "version.h"
+
+#define AE_WIDEN2(x) L##x
+#define AE_WIDEN(x) AE_WIDEN2(x)
+static const wchar_t *kAppVersion = AE_WIDEN(APP_VERSION_STR);
+
+#ifndef WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY
+#define WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY 4
+#endif
 
 // ------------------------------------------------------------------ state
 static HWND g_hwnd = nullptr;
@@ -67,6 +87,24 @@ enum
 static const wchar_t *kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 static const wchar_t *kRunValue = L"AudioEnhancer";
 
+// ---- settings page + updates
+static const UINT WM_UPDATE_MSG = WM_APP + 3;    // worker thread -> UI thread: lParam = new std::wstring(json)
+static const UINT WM_UPDATE_LAUNCH = WM_APP + 4; // worker thread -> UI thread: run the downloaded installer
+static std::wstring g_theme = L"default";        // see ui/style.css for the theme ids
+static std::wstring g_mode = L"system";          // system | light | dark
+static bool g_checkUpdates = true;
+
+struct UpdateInfo
+{
+    std::wstring tag, url, name, sha256;
+};
+static std::mutex g_updMutex;
+static UpdateInfo g_upd;       // newest release found by the last check
+static std::wstring g_updFile; // downloaded installer
+static std::wstring g_notifiedTag;
+static std::atomic<bool> g_updBusy(false);
+static ULONGLONG g_lastUpdateCheck = 0;
+
 static UINT g_wmTaskbarCreated = 0;   // Explorer restarted -> re-add the tray icon
 static UINT g_wmShowApp = 0;          // sent by a second instance: "bring the window up"
 static HICON g_trayIconOn = nullptr;  // enhancer running
@@ -77,7 +115,9 @@ static bool g_quitting = false;
 static bool g_startHidden = false;
 static bool g_trayHintShown = false; // the "still running in the tray" balloon is shown only once
 
-static void updateTray(); // defined with the tray code below
+static void updateTray();  // defined with the tray code below
+static bool isAutostart(); // defined with the tray code below
+static void setAutostart(bool on);
 
 // ------------------------------------------------------------------ helpers
 static int clampInt(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -235,6 +275,21 @@ static void applyToneToEngine()
     g_engine.setTreble(g_treble);
 }
 
+static bool validThemeId(const std::wstring &t)
+{
+    if (t.empty() || t.size() > 24)
+        return false;
+    for (wchar_t c : t)
+        if (!((c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') || c == L'-'))
+            return false;
+    return true;
+}
+
+static bool validMode(const std::wstring &m)
+{
+    return m == L"system" || m == L"light" || m == L"dark";
+}
+
 static void loadSettings()
 {
     const std::wstring p = settingsPath();
@@ -252,6 +307,14 @@ static void loadSettings()
     GetPrivateProfileStringW(sec, L"Output", L"", buf, 512, p.c_str());
     g_outputId = buf;
     g_trayHintShown = GetPrivateProfileIntW(L"App", L"TrayHint", 0, p.c_str()) != 0;
+    g_checkUpdates = GetPrivateProfileIntW(L"App", L"CheckUpdates", 1, p.c_str()) != 0;
+    wchar_t t[64] = {};
+    GetPrivateProfileStringW(L"App", L"Theme", L"default", t, 64, p.c_str());
+    if (validThemeId(t))
+        g_theme = t;
+    GetPrivateProfileStringW(L"App", L"Mode", L"system", t, 64, p.c_str());
+    if (validMode(t))
+        g_mode = t;
 }
 
 static void saveSettings()
@@ -267,6 +330,9 @@ static void saveSettings()
     WritePrivateProfileStringW(sec, L"Power", g_savedPower ? L"1" : L"0", p.c_str());
     WritePrivateProfileStringW(sec, L"Output", g_outputId.c_str(), p.c_str());
     WritePrivateProfileStringW(L"App", L"TrayHint", g_trayHintShown ? L"1" : L"0", p.c_str());
+    WritePrivateProfileStringW(L"App", L"CheckUpdates", g_checkUpdates ? L"1" : L"0", p.c_str());
+    WritePrivateProfileStringW(L"App", L"Theme", g_theme.c_str(), p.c_str());
+    WritePrivateProfileStringW(L"App", L"Mode", g_mode.c_str(), p.c_str());
 }
 
 // ------------------------------------------------------------------ C++ -> JS
@@ -286,6 +352,14 @@ static void postStatus(const wchar_t *state, const std::wstring &title, const st
 static void postPower()
 {
     postJson(std::wstring(L"{\"type\":\"power\",\"value\":") + (g_power ? L"true" : L"false") + L"}");
+}
+
+static void postSettings()
+{
+    postJson(L"{\"type\":\"settings\",\"theme\":\"" + jsonEsc(g_theme) + L"\",\"mode\":\"" + jsonEsc(g_mode) +
+             L"\",\"autostart\":" + (isAutostart() ? L"true" : L"false") +
+             L",\"checkUpdates\":" + (g_checkUpdates ? L"true" : L"false") + L",\"version\":\"" + kAppVersion +
+             L"\"}");
 }
 
 static void postState()
@@ -482,6 +556,549 @@ static void changeOutput(const std::wstring &id)
     }
 }
 
+// ------------------------------------------------------------------ updates (GitHub Releases)
+static const wchar_t *kLatestApiUrl = L"https://api.github.com/repos/mahfuz0712/audioEnhancer/releases/latest";
+static const wchar_t *kDownloadPrefix = L"https://github.com/mahfuz0712/audioEnhancer/releases/download/";
+
+// Which release file belongs to this OS. The app is Windows-only today (WASAPI + WebView2);
+// a Linux build would return L".deb" here (and use the matching install command).
+static const wchar_t *platformAssetExtension() { return L".exe"; }
+
+static void postUpd(const std::wstring &json, bool notify = false)
+{
+    if (g_hwnd)
+        PostMessageW(g_hwnd, WM_UPDATE_MSG, notify ? 1 : 0, (LPARAM) new std::wstring(json));
+}
+
+static void updEvt(const wchar_t *state, const std::wstring &extra = L"")
+{
+    postUpd(L"{\"type\":\"update\",\"state\":\"" + std::wstring(state) + L"\",\"current\":\"" + kAppVersion + L"\"" +
+            extra + L"}");
+}
+
+static void updError(const std::wstring &msg)
+{
+    updEvt(L"error", L",\"message\":\"" + jsonEsc(msg) + L"\"");
+}
+
+struct HttpReq
+{
+    HINTERNET ses = nullptr, con = nullptr, req = nullptr;
+    ~HttpReq()
+    {
+        if (req)
+            WinHttpCloseHandle(req);
+        if (con)
+            WinHttpCloseHandle(con);
+        if (ses)
+            WinHttpCloseHandle(ses);
+    }
+};
+
+// Opens the request and reads the response headers. Redirects (GitHub -> CDN) are followed automatically.
+static bool httpStart(const std::wstring &url, const wchar_t *accept, HttpReq &h, DWORD &status, DWORD &len)
+{
+    wchar_t host[256] = {}, path[2048] = {}, extra[1024] = {};
+    URL_COMPONENTSW uc = {};
+    uc.dwStructSize = sizeof(uc);
+    uc.lpszHostName = host;
+    uc.dwHostNameLength = 256;
+    uc.lpszUrlPath = path;
+    uc.dwUrlPathLength = 2048;
+    uc.lpszExtraInfo = extra;
+    uc.dwExtraInfoLength = 1024;
+    if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc))
+        return false;
+
+    const std::wstring ua = std::wstring(L"AudioEnhancer/") + kAppVersion;
+    h.ses = WinHttpOpen(ua.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                        WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!h.ses)
+        h.ses = WinHttpOpen(ua.c_str(), WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME,
+                            WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!h.ses)
+        return false;
+    WinHttpSetTimeouts(h.ses, 15000, 15000, 20000, 60000);
+    h.con = WinHttpConnect(h.ses, host, uc.nPort, 0);
+    if (!h.con)
+        return false;
+    const std::wstring target = std::wstring(path) + extra;
+    h.req = WinHttpOpenRequest(h.con, L"GET", target.c_str(), nullptr, WINHTTP_NO_REFERER,
+                               WINHTTP_DEFAULT_ACCEPT_TYPES,
+                               uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
+    if (!h.req)
+        return false;
+    const std::wstring hdr = std::wstring(L"Accept: ") + accept + L"\r\nX-GitHub-Api-Version: 2022-11-28\r\n";
+    if (!WinHttpSendRequest(h.req, hdr.c_str(), (DWORD)-1, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) ||
+        !WinHttpReceiveResponse(h.req, nullptr))
+        return false;
+    DWORD sz = sizeof(DWORD);
+    status = 0;
+    WinHttpQueryHeaders(h.req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                        &status, &sz, WINHTTP_NO_HEADER_INDEX);
+    sz = sizeof(DWORD);
+    len = 0;
+    WinHttpQueryHeaders(h.req, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
+                        WINHTTP_HEADER_NAME_BY_INDEX, &len, &sz, WINHTTP_NO_HEADER_INDEX);
+    return true;
+}
+
+static std::wstring utf8ToWide(const std::string &s)
+{
+    if (s.empty())
+        return L"";
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), nullptr, 0);
+    std::wstring w(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], n);
+    return w;
+}
+
+static bool httpGetString(const std::wstring &url, std::wstring &out, DWORD &status)
+{
+    HttpReq h;
+    DWORD len = 0;
+    if (!httpStart(url, L"application/vnd.github+json", h, status, len))
+        return false;
+    std::string data;
+    for (;;)
+    {
+        DWORD avail = 0;
+        if (!WinHttpQueryDataAvailable(h.req, &avail) || avail == 0)
+            break;
+        std::string chunk(avail, '\0');
+        DWORD got = 0;
+        if (!WinHttpReadData(h.req, &chunk[0], avail, &got) || got == 0)
+            break;
+        data.append(chunk.data(), got);
+        if (data.size() > 4 * 1024 * 1024)
+            break; // a release description is never this big
+    }
+    out = utf8ToWide(data);
+    return true;
+}
+
+static bool httpDownload(const std::wstring &url, const std::wstring &path, std::wstring &err,
+                         const std::function<void(int)> &progress)
+{
+    HttpReq h;
+    DWORD status = 0, len = 0;
+    if (!httpStart(url, L"application/octet-stream", h, status, len))
+    {
+        err = L"Could not reach GitHub. Check your internet connection.";
+        return false;
+    }
+    if (status != 200)
+    {
+        err = L"The download failed (HTTP " + std::to_wstring(status) + L").";
+        return false;
+    }
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE)
+    {
+        err = L"Could not write the installer to the temp folder.";
+        return false;
+    }
+    bool ok = true;
+    ULONGLONG total = 0;
+    int lastPct = -1;
+    std::vector<char> buf(64 * 1024);
+    for (;;)
+    {
+        DWORD got = 0;
+        if (!WinHttpReadData(h.req, buf.data(), (DWORD)buf.size(), &got))
+        {
+            ok = false;
+            break;
+        }
+        if (got == 0)
+            break;
+        DWORD wr = 0;
+        if (!WriteFile(f, buf.data(), got, &wr, nullptr) || wr != got)
+        {
+            ok = false;
+            break;
+        }
+        total += got;
+        if (len > 0)
+        {
+            const int pct = (int)(total * 100 / len);
+            if (pct != lastPct)
+            {
+                lastPct = pct;
+                progress(pct);
+            }
+        }
+    }
+    CloseHandle(f);
+    if (!ok || (len > 0 && total != len))
+    {
+        DeleteFileW(path.c_str());
+        err = L"The download was interrupted. Please try again.";
+        return false;
+    }
+    return true;
+}
+
+static bool sha256File(const std::wstring &path, std::wstring &hex)
+{
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE)
+        return false;
+    BCRYPT_ALG_HANDLE alg = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    bool ok = false;
+    if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0 &&
+        BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) >= 0)
+    {
+        std::vector<UCHAR> buf(64 * 1024);
+        DWORD got = 0;
+        ok = true;
+        while (ReadFile(f, buf.data(), (DWORD)buf.size(), &got, nullptr) && got > 0)
+            if (BCryptHashData(hash, buf.data(), got, 0) < 0)
+            {
+                ok = false;
+                break;
+            }
+        UCHAR digest[32] = {};
+        if (ok && BCryptFinishHash(hash, digest, 32, 0) >= 0)
+        {
+            hex.clear();
+            for (UCHAR b : digest)
+            {
+                wchar_t t[4];
+                swprintf(t, 4, L"%02x", (unsigned)b);
+                hex += t;
+            }
+        }
+        else
+        {
+            ok = false;
+        }
+    }
+    if (hash)
+        BCryptDestroyHash(hash);
+    if (alg)
+        BCryptCloseAlgorithmProvider(alg, 0);
+    CloseHandle(f);
+    return ok;
+}
+
+// "v1.0.10" -> {1,0,10}
+static std::vector<int> parseVersion(const std::wstring &s)
+{
+    std::vector<int> v;
+    size_t i = 0;
+    while (i < s.size())
+    {
+        if (s[i] >= L'0' && s[i] <= L'9')
+        {
+            int n = 0;
+            while (i < s.size() && s[i] >= L'0' && s[i] <= L'9')
+                n = n * 10 + (s[i++] - L'0');
+            v.push_back(n);
+        }
+        else if (!v.empty() && s[i] != L'.')
+        {
+            break; // "1.0.1-beta": stop at the suffix
+        }
+        else
+        {
+            i++;
+        }
+    }
+    return v;
+}
+
+static int compareVersions(const std::wstring &a, const std::wstring &b)
+{
+    const std::vector<int> x = parseVersion(a), y = parseVersion(b);
+    for (size_t i = 0; i < (x.size() > y.size() ? x.size() : y.size()); i++)
+    {
+        const int p = i < x.size() ? x[i] : 0, q = i < y.size() ? y[i] : 0;
+        if (p != q)
+            return p < q ? -1 : 1;
+    }
+    return 0;
+}
+
+// Reads the string value of "key" found between [from, to) in a JSON text (just enough JSON for GitHub's reply).
+static bool jsonGet(const std::wstring &j, const std::wstring &key, size_t from, size_t to, std::wstring &out)
+{
+    const std::wstring pat = L"\"" + key + L"\"";
+    size_t p = j.find(pat, from);
+    if (p == std::wstring::npos || p >= to)
+        return false;
+    p += pat.size();
+    while (p < j.size() && (j[p] == L':' || j[p] == L' ' || j[p] == L'\n' || j[p] == L'\r' || j[p] == L'\t'))
+        p++;
+    if (p >= j.size() || j[p] != L'"')
+        return false; // null / number
+    p++;
+    out.clear();
+    while (p < j.size() && j[p] != L'"')
+    {
+        if (j[p] == L'\\' && p + 1 < j.size())
+        {
+            const wchar_t c = j[++p];
+            if (c == L'n')
+                out += L'\n';
+            else if (c == L't')
+                out += L'\t';
+            else if (c == L'r')
+                ; // drop
+            else if (c == L'u' && p + 4 < j.size())
+            {
+                out += (wchar_t)wcstol(j.substr(p + 1, 4).c_str(), nullptr, 16);
+                p += 4;
+            }
+            else
+                out += c;
+        }
+        else
+        {
+            out += j[p];
+        }
+        p++;
+    }
+    return true;
+}
+
+static std::wstring lowerCopy(std::wstring s)
+{
+    for (auto &c : s)
+        c = (wchar_t)towlower(c);
+    return s;
+}
+
+static void updateCheckWorker(bool silent)
+{
+    std::wstring body;
+    DWORD status = 0;
+    if (!httpGetString(kLatestApiUrl, body, status))
+    {
+        updError(L"Could not reach GitHub. Check your internet connection.");
+        g_updBusy = false;
+        return;
+    }
+    if (status == 404)
+    { // no release published yet
+        updEvt(L"latest");
+        g_updBusy = false;
+        return;
+    }
+    if (status == 403 || status == 429)
+    {
+        updError(L"GitHub is limiting requests right now. Please try again in a while.");
+        g_updBusy = false;
+        return;
+    }
+    std::wstring tag;
+    if (status != 200 || !jsonGet(body, L"tag_name", 0, std::wstring::npos, tag))
+    {
+        updError(L"Could not read the release information (HTTP " + std::to_wstring(status) + L").");
+        g_updBusy = false;
+        return;
+    }
+
+    std::wstring shown = tag;
+    if (!shown.empty() && (shown[0] == L'v' || shown[0] == L'V'))
+        shown.erase(0, 1);
+
+    if (compareVersions(tag, kAppVersion) <= 0)
+    {
+        updEvt(L"latest", L",\"latest\":\"" + jsonEsc(shown) + L"\"");
+        g_updBusy = false;
+        return;
+    }
+
+    // pick the release file for this OS (Windows: *.exe, preferably the one called "...Setup...")
+    const std::wstring ext = platformAssetExtension();
+    UpdateInfo best;
+    ULONGLONG bestSize = 0;
+    int bestScore = -1;
+    size_t pos = 0;
+    const size_t npos = std::wstring::npos;
+    while ((pos = body.find(L"\"browser_download_url\"", pos)) != npos)
+    {
+        const size_t urlPos = pos;
+        pos += 21;
+        std::wstring url, name, digest;
+        if (!jsonGet(body, L"browser_download_url", urlPos, npos, url))
+            continue;
+        size_t start = body.rfind(L"/releases/assets/", urlPos);
+        if (start == npos)
+            start = 0;
+        jsonGet(body, L"name", start, urlPos, name);
+        jsonGet(body, L"digest", start, urlPos, digest);
+        ULONGLONG size = 0;
+        const size_t sp = body.find(L"\"size\":", start);
+        if (sp != npos && sp < urlPos)
+            size = _wcstoui64(body.c_str() + sp + 7, nullptr, 10);
+
+        const std::wstring ln = lowerCopy(name);
+        if (ln.size() < ext.size() || ln.compare(ln.size() - ext.size(), ext.size(), ext) != 0)
+            continue;
+        const int score = 1 + (ln.find(L"setup") != npos ? 2 : 0);
+        if (score > bestScore)
+        {
+            bestScore = score;
+            best.url = url;
+            best.name = name;
+            best.tag = tag;
+            best.sha256 = (digest.rfind(L"sha256:", 0) == 0) ? digest.substr(7) : L"";
+            bestSize = size;
+        }
+    }
+
+    std::wstring notes;
+    jsonGet(body, L"body", 0, npos, notes);
+    if (notes.size() > 1200)
+        notes = notes.substr(0, 1200) + L"...";
+
+    if (bestScore < 0)
+    {
+        updEvt(L"noasset", L",\"latest\":\"" + jsonEsc(shown) + L"\"");
+        g_updBusy = false;
+        return;
+    }
+
+    bool notify = false;
+    {
+        std::lock_guard<std::mutex> lock(g_updMutex);
+        g_upd = best;
+        if (silent && g_notifiedTag != tag)
+        {
+            g_notifiedTag = tag;
+            notify = true;
+        }
+    }
+    postUpd(L"{\"type\":\"update\",\"state\":\"available\",\"current\":\"" + std::wstring(kAppVersion) +
+                L"\",\"latest\":\"" + jsonEsc(shown) + L"\",\"name\":\"" + jsonEsc(best.name) + L"\",\"size\":" +
+                std::to_wstring(bestSize) + L",\"notes\":\"" + jsonEsc(notes) + L"\"}",
+            notify);
+    g_updBusy = false;
+}
+
+static void updateDownloadWorker()
+{
+    UpdateInfo info;
+    {
+        std::lock_guard<std::mutex> lock(g_updMutex);
+        info = g_upd;
+    }
+    // only ever download from this project's own GitHub releases
+    if (info.url.rfind(kDownloadPrefix, 0) != 0)
+    {
+        updError(L"The update link is not a release of this project, so it was not downloaded.");
+        g_updBusy = false;
+        return;
+    }
+    std::wstring safe;
+    for (wchar_t c : info.name)
+        safe += ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'.' ||
+                 c == L'-' || c == L'_')
+                    ? c
+                    : L'_';
+    if (safe.empty())
+        safe = L"AudioEnhancer-Setup.exe";
+
+    wchar_t tmp[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, tmp);
+    const std::wstring dir = std::wstring(tmp) + L"AudioEnhancerUpdate";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    const std::wstring file = dir + L"\\" + safe;
+
+    updEvt(L"downloading", L",\"progress\":0");
+    std::wstring err;
+    const bool ok = httpDownload(info.url, file, err, [](int pct)
+                                 { updEvt(L"downloading", L",\"progress\":" + std::to_wstring(pct)); });
+    if (!ok)
+    {
+        updError(err);
+        g_updBusy = false;
+        return;
+    }
+    if (!info.sha256.empty())
+    {
+        std::wstring got;
+        if (!sha256File(file, got) || lowerCopy(got) != lowerCopy(info.sha256))
+        {
+            DeleteFileW(file.c_str());
+            updError(L"The downloaded file is damaged (checksum mismatch), so it was not started.");
+            g_updBusy = false;
+            return;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_updMutex);
+        g_updFile = file;
+    }
+    updEvt(L"installing");
+    PostMessageW(g_hwnd, WM_UPDATE_LAUNCH, 0, 0);
+    g_updBusy = false;
+}
+
+static void startUpdateCheck(bool silent)
+{
+    bool expected = false;
+    if (!g_updBusy.compare_exchange_strong(expected, true))
+        return;
+    g_lastUpdateCheck = GetTickCount64();
+    if (!silent)
+        updEvt(L"checking");
+    std::thread(updateCheckWorker, silent).detach();
+}
+
+static void startUpdateDownload()
+{
+    {
+        std::lock_guard<std::mutex> lock(g_updMutex);
+        if (g_upd.url.empty())
+            return;
+    }
+    bool expected = false;
+    if (!g_updBusy.compare_exchange_strong(expected, true))
+        return;
+    std::thread(updateDownloadWorker).detach();
+}
+
+// UI thread: run the downloaded installer (UAC asks for admin), then close ourselves so it can replace the files.
+static void launchInstaller()
+{
+    std::wstring file;
+    {
+        std::lock_guard<std::mutex> lock(g_updMutex);
+        file = g_updFile;
+    }
+    SHELLEXECUTEINFOW sei = {};
+    sei.cbSize = sizeof(sei);
+    sei.lpVerb = L"open";
+    sei.lpFile = file.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+    if (ShellExecuteExW(&sei))
+    {
+        g_quitting = true;
+        DestroyWindow(g_hwnd); // stops the engine and puts the normal output device back
+    }
+    else
+    {
+        updError(L"The installer was not started (permission was declined).");
+    }
+}
+
+static void openUrl(const std::wstring &u)
+{
+    static const wchar_t *allowed[] = {L"https://github.com/mahfuz0712/", L"https://vb-audio.com/",
+                                       L"https://portfolio-mahfuz0712.vercel.app"};
+    for (const wchar_t *a : allowed)
+        if (u.rfind(a, 0) == 0)
+        {
+            ShellExecuteW(nullptr, L"open", u.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            return;
+        }
+}
+
 // First start of the engine after launch (also used when the app starts hidden in the tray).
 static void bootEngine()
 {
@@ -511,6 +1128,46 @@ static void handleMessage(const std::wstring &m)
             postCurrentStatus();
         }
         postPower();
+        postSettings();
+        if (g_checkUpdates)
+            startUpdateCheck(true);
+    }
+    else if (type == L"theme")
+    {
+        if (validThemeId(val))
+        {
+            g_theme = val;
+            g_dirty = true;
+        }
+    }
+    else if (type == L"mode")
+    {
+        if (validMode(val))
+        {
+            g_mode = val;
+            g_dirty = true;
+        }
+    }
+    else if (type == L"autostart")
+    {
+        setAutostart(val == L"1");
+        postSettings();
+    }
+    else if (type == L"checkupdates")
+    {
+        g_checkUpdates = (val == L"1");
+        g_dirty = true;
+    }
+    else if (type == L"update")
+    {
+        if (val == L"check")
+            startUpdateCheck(false);
+        else if (val == L"install")
+            startUpdateDownload();
+    }
+    else if (type == L"openurl")
+    {
+        openUrl(val);
     }
     else if (type == L"output")
     {
@@ -785,7 +1442,7 @@ static void updateTray()
     Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
-static void showTrayHint()
+static void showTrayBalloon(const wchar_t *title, const wchar_t *text)
 {
     NOTIFYICONDATAW nid = {};
     nid.cbSize = sizeof(nid);
@@ -793,9 +1450,15 @@ static void showTrayHint()
     nid.uID = TRAY_UID;
     nid.uFlags = NIF_INFO;
     nid.dwInfoFlags = NIIF_INFO;
-    lstrcpynW(nid.szInfoTitle, L"Audio Enhancer is still running", 64);
-    lstrcpynW(nid.szInfo, L"Click the tray icon to open it again. Right-click it and choose Exit to quit.", 256);
+    lstrcpynW(nid.szInfoTitle, title, 64);
+    lstrcpynW(nid.szInfo, text, 256);
     Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
+static void showTrayHint()
+{
+    showTrayBalloon(L"Audio Enhancer is still running",
+                    L"Click the tray icon to open it again. Right-click it and choose Exit to quit.");
 }
 
 static void hideToTray()
@@ -872,6 +1535,7 @@ static void showTrayMenu(HWND hwnd)
         break;
     case ID_TRAY_AUTOSTART:
         setAutostart(!isAutostart());
+        postSettings(); // keep the Settings page toggle in sync
         break;
     case ID_TRAY_EXIT:
         g_quitting = true;
@@ -926,6 +1590,28 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         break; // no tray -> normal close
+    case WM_UPDATE_MSG:
+    {
+        std::wstring *json = (std::wstring *)lp;
+        if (json)
+        {
+            postJson(*json);
+            delete json;
+        }
+        if (wp == 1 && g_trayAdded && !IsWindowVisible(hwnd))
+        { // found a new version while hidden in the tray
+            std::wstring text;
+            {
+                std::lock_guard<std::mutex> lock(g_updMutex);
+                text = L"Version " + g_upd.tag + L" is available. Open Audio Enhancer > Settings to update.";
+            }
+            showTrayBalloon(L"Audio Enhancer update available", text.c_str());
+        }
+        return 0;
+    }
+    case WM_UPDATE_LAUNCH:
+        launchInstaller();
+        return 0;
     case WM_TRAY:
         switch (LOWORD(lp))
         {
@@ -971,6 +1657,9 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         refreshDevices(false); // auto-detect newly connected / removed devices
         if (g_startHidden && !g_booted)
             bootEngine(); // hidden start: do not wait for the page to say "ready"
+        if (g_checkUpdates && g_booted && g_lastUpdateCheck != 0 &&
+            GetTickCount64() - g_lastUpdateCheck > 12ULL * 60 * 60 * 1000)
+            startUpdateCheck(true); // the app can stay in the tray for days: look again every 12 hours
         if (g_dirty)
         {
             saveSettings();

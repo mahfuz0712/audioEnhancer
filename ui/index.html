@@ -1,202 +1,435 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!doctype html>
+<html lang="en" data-theme="default" data-mode="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <title>Audio Enhancer</title>
 
-    <link rel="stylesheet" href="style.css">
-</head>
+    <link rel="stylesheet" href="style.css" />
+  </head>
 
-<body>
-
+  <body>
     <div class="app">
+      <main>
+        <!-- =====================================================
+                 MAIN VIEW
+            ====================================================== -->
+        <div id="viewMain" class="view">
+          <div class="header">
+            <div class="app-icon">
+              <img src="icon.png" alt="" />
+            </div>
 
-        <!-- Main Content -->
-        <main>
+            <div class="header-text">
+              <h1>Audio Enhancer</h1>
+              <p>Configure your audio experience</p>
+            </div>
 
-            <div class="header">
-                <div class="app-icon">
-                    <img src="icon.png" alt="">
+            <!-- Hamburger menu -->
+            <div class="menu-wrap" id="menuWrap">
+              <button
+                class="icon-btn"
+                id="menuBtn"
+                type="button"
+                title="Menu"
+                aria-label="Menu"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                >
+                  <path d="M4 7h16M4 12h16M4 17h16" />
+                </svg>
+                <span class="badge" id="menuBadge" hidden></span>
+              </button>
+
+              <div class="menu" id="menu">
+                <button type="button" data-go="top">
+                   Settings
+                </button>
+                <button type="button" data-go="updates">
+                   Check for updates
+                </button>
+                <button type="button" data-go="about">
+                   About
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- New version banner (shown when an update was found) -->
+          <div class="update-banner" id="updateBanner" hidden>
+            <span class="ub-text" id="updateBannerText"
+              >A new version is available</span
+            >
+            <button type="button" class="btn small" id="updateBannerBtn">
+              View
+            </button>
+          </div>
+
+          <!-- Settings Card -->
+          <section class="settings-card">
+            <!-- Audio Output -->
+            <div class="setting">
+              <div class="setting-info">
+                <div class="setting-icon speaker">
+                  <span>🔊</span>
                 </div>
 
                 <div>
-                    <h1>Audio Enhancer</h1>
-                    <p>Configure your audio experience</p>
+                  <h2>Audio Output</h2>
+                  <p>Select where your audio should play</p>
                 </div>
+              </div>
+
+              <div class="custom-select" id="outputSelect">
+                <button class="select-button">
+                  <span id="outputValue">Detecting devices…</span>
+                  <span class="chevron">⌄</span>
+                </button>
+
+                <!-- filled by updateAudioDevices() -->
+                <div class="dropdown-menu"></div>
+              </div>
             </div>
 
+            <div class="divider"></div>
 
-            <!-- Settings Card -->
-            <section class="settings-card">
-
-                <!-- Audio Output -->
-                <div class="setting">
-
-                    <div class="setting-info">
-                        <div class="setting-icon speaker">
-                            <span>🔊</span>
-                        </div>
-
-                        <div>
-                            <h2>Audio Output</h2>
-                            <p>Select where your audio should play</p>
-                        </div>
-                    </div>
-
-                    <div class="custom-select" id="outputSelect">
-
-                        <button class="select-button">
-                            <span id="outputValue">Detecting devices…</span>
-                            <span class="chevron">⌄</span>
-                        </button>
-
-                        <!-- filled by updateAudioDevices() -->
-                        <div class="dropdown-menu"></div>
-                    </div>
-
+            <!-- Audio Effect -->
+            <div class="setting">
+              <div class="setting-info">
+                <div class="setting-icon effect">
+                  <span>◉</span>
                 </div>
 
-
-                <div class="divider"></div>
-
-
-                <!-- Audio Effect -->
-                <div class="setting">
-
-                    <div class="setting-info">
-
-                        <div class="setting-icon effect">
-                            <span>◉</span>
-                        </div>
-
-                        <div>
-                            <h2>Audio Effect</h2>
-                            <p>Choose your preferred sound profile</p>
-                        </div>
-
-                    </div>
-
-
-                    <div class="custom-select" id="effectSelect">
-
-                        <button class="select-button">
-                            <span id="effectValue">Normal</span>
-                            <span class="chevron">⌄</span>
-                        </button>
-
-
-                        <div class="dropdown-menu">
-
-                            <div class="dropdown-item active" data-value="Normal">
-                                <div>
-                                    <strong>Normal</strong>
-                                    <small>Natural sound</small>
-                                </div>
-                                <span class="check">✓</span>
-                            </div>
-
-                            <div class="dropdown-item" data-value="3D">
-                                <div>
-                                    <strong>3D</strong>
-                                    <small>Immersive spatial sound</small>
-                                </div>
-                                <span class="check">✓</span>
-                            </div>
-
-                            <div class="dropdown-item" data-value="Balanced">
-                                <div>
-                                    <strong>Balanced</strong>
-                                    <small>Enhanced balanced audio</small>
-                                </div>
-                                <span class="check">✓</span>
-                            </div>
-
-                        </div>
-
-                    </div>
-
+                <div>
+                  <h2>Audio Effect</h2>
+                  <p>Choose your preferred sound profile</p>
                 </div>
+              </div>
 
-            </section>
+              <div class="custom-select" id="effectSelect">
+                <button class="select-button">
+                  <span id="effectValue">Normal</span>
+                  <span class="chevron">⌄</span>
+                </button>
 
-
-            <!-- Sound Card: volume / bass / treble -->
-            <section class="settings-card sound-card">
-
-                <div class="slider-row">
-                    <div class="setting-icon">🔈</div>
-                    <div class="slider-label">
-                        <h2>Volume</h2>
-                        <p>Output level</p>
+                <div class="dropdown-menu">
+                  <div class="dropdown-item active" data-value="Normal">
+                    <div>
+                      <strong>Normal</strong>
+                      <small>Natural sound</small>
                     </div>
-                    <input type="range" class="range" id="volume" min="0" max="100" step="1" value="100" data-default="100">
-                    <span class="slider-value" id="volumeValue">100%</span>
-                </div>
+                    <span class="check">✓</span>
+                  </div>
 
-                <div class="divider"></div>
-
-                <div class="slider-row">
-                    <div class="setting-icon">🥁</div>
-                    <div class="slider-label">
-                        <h2>Bass</h2>
-                        <p>Low frequencies</p>
+                  <div class="dropdown-item" data-value="3D">
+                    <div>
+                      <strong>3D</strong>
+                      <small>Immersive spatial sound</small>
                     </div>
-                    <input type="range" class="range" id="bass" min="-10" max="10" step="1" value="0" data-default="0">
-                    <span class="slider-value" id="bassValue">0 dB</span>
-                </div>
+                    <span class="check">✓</span>
+                  </div>
 
-                <div class="divider"></div>
-
-                <div class="slider-row">
-                    <div class="setting-icon">🎼</div>
-                    <div class="slider-label">
-                        <h2>Treble</h2>
-                        <p>High frequencies</p>
+                  <div class="dropdown-item" data-value="Balanced">
+                    <div>
+                      <strong>Balanced</strong>
+                      <small>Enhanced balanced audio</small>
                     </div>
-                    <input type="range" class="range" id="treble" min="-10" max="10" step="1" value="0" data-default="0">
-                    <span class="slider-value" id="trebleValue">0 dB</span>
+                    <span class="check">✓</span>
+                  </div>
                 </div>
+              </div>
+            </div>
+          </section>
 
-            </section>
+          <!-- Sound Card: volume / bass / treble -->
+          <section class="settings-card sound-card">
+            <div class="slider-row">
+              <div class="setting-icon">🔈</div>
+              <div class="slider-label">
+                <h2>Volume</h2>
+                <p>Output level</p>
+              </div>
+              <input
+                type="range"
+                class="range"
+                id="volume"
+                min="0"
+                max="100"
+                step="1"
+                value="100"
+                data-default="100"
+              />
+              <span class="slider-value" id="volumeValue">100%</span>
+            </div>
 
+            <div class="divider"></div>
 
-            <!-- Current Status + Power -->
-            <section class="status-card">
+            <div class="slider-row">
+              <div class="setting-icon">🥁</div>
+              <div class="slider-label">
+                <h2>Bass</h2>
+                <p>Low frequencies</p>
+              </div>
+              <input
+                type="range"
+                class="range"
+                id="bass"
+                min="-10"
+                max="10"
+                step="1"
+                value="0"
+                data-default="0"
+              />
+              <span class="slider-value" id="bassValue">0 dB</span>
+            </div>
 
-                <div class="status-left">
+            <div class="divider"></div>
 
-                    <div class="status-indicator idle" id="statusDot"></div>
+            <div class="slider-row">
+              <div class="setting-icon">🎼</div>
+              <div class="slider-label">
+                <h2>Treble</h2>
+                <p>High frequencies</p>
+              </div>
+              <input
+                type="range"
+                class="range"
+                id="treble"
+                min="-10"
+                max="10"
+                step="1"
+                value="0"
+                data-default="0"
+              />
+              <span class="slider-value" id="trebleValue">0 dB</span>
+            </div>
+          </section>
 
-                    <div class="status-text">
-                        <span class="status-title" id="statusTitle">Starting…</span>
-                        <span class="status-description" id="statusText">Please wait</span>
-                    </div>
+          <!-- Current Status + Power -->
+          <section class="status-card">
+            <div class="status-left">
+              <div class="status-indicator idle" id="statusDot"></div>
 
-                </div>
+              <div class="status-text">
+                <span class="status-title" id="statusTitle">Starting…</span>
+                <span class="status-description" id="statusText"
+                  >Please wait</span
+                >
+              </div>
+            </div>
 
-                <label class="switch" title="Turn Audio Enhancer on / off">
-                    <input type="checkbox" id="powerToggle">
-                    <span class="slider"></span>
-                </label>
+            <label class="switch power" title="Turn Audio Enhancer on / off">
+              <input type="checkbox" id="powerToggle" />
+              <span class="slider"></span>
+            </label>
+          </section>
+        </div>
 
-            </section>
+        <!-- =====================================================
+                 SETTINGS VIEW
+            ====================================================== -->
+        <div id="viewSettings" class="view" hidden>
+          <div class="header">
+            <button
+              class="icon-btn"
+              id="backBtn"
+              type="button"
+              title="Back"
+              aria-label="Back"
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M15 5l-7 7 7 7" />
+              </svg>
+            </button>
 
-        </main>
+            <div class="header-text">
+              <h1>Settings</h1>
+              <p>Appearance, updates and about</p>
+            </div>
+          </div>
 
+          <!-- Appearance -->
+          <section class="settings-card pad" id="secAppearance">
+            <h3 class="section-title">Appearance</h3>
 
-        <!-- Footer -->
-        <footer>
-            <span>Audio Enhancer</span>
-            <span>Double-click a slider to reset it</span>
-            <span>v1.0.1</span>
-        </footer>
+            <div class="block">
+              <div class="block-head">
+                <h2>Mode</h2>
+                <p>Light, dark, or follow Windows</p>
+              </div>
+              <div class="segmented" id="modeSeg">
+                <button type="button" data-mode="system">System</button>
+                <button type="button" data-mode="light">Light</button>
+                <button type="button" data-mode="dark">Dark</button>
+              </div>
+            </div>
 
+            <div class="divider flush"></div>
+
+            <div class="block">
+              <div class="block-head">
+                <h2>Theme</h2>
+                <p>
+                  Every theme has a light and a dark version. The version
+                  follows the mode above.
+                </p>
+              </div>
+              <div class="theme-grid" id="themeGrid"></div>
+            </div>
+          </section>
+
+          <!-- General -->
+          <section class="settings-card pad" id="secGeneral">
+            <h3 class="section-title">General</h3>
+
+            <div class="row">
+              <div class="row-text">
+                <h2>Start with Windows</h2>
+                <p>Start hidden in the system tray when you sign in</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="autostartToggle" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div class="divider flush"></div>
+
+            <div class="row">
+              <div class="row-text">
+                <h2>Check for updates automatically</h2>
+                <p>When the app starts, and every 12 hours while it runs</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="checkUpdatesToggle" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </section>
+
+          <!-- Updates -->
+          <section class="settings-card pad" id="secUpdates">
+            <h3 class="section-title">Updates</h3>
+
+            <div class="row">
+              <div class="row-text">
+                <h2>Current version</h2>
+                <p id="updStatus">Not checked yet</p>
+              </div>
+              <span class="pill" id="curVersion">v1.0.0</span>
+            </div>
+
+            <div class="progress" id="updProgress" hidden>
+              <div class="progress-bar" id="updProgressBar"></div>
+            </div>
+
+            <div class="notes" id="updNotes" hidden></div>
+
+            <div class="btn-row">
+              <button type="button" class="btn" id="btnCheck">
+                Check for updates
+              </button>
+              <button type="button" class="btn primary" id="btnInstall" hidden>
+                Download &amp; install
+              </button>
+              <button
+                type="button"
+                class="btn"
+                id="btnReleases"
+                data-url="https://github.com/mahfuz0712/audioEnhancer/releases"
+                hidden
+              >
+                Open releases page
+              </button>
+            </div>
+          </section>
+
+          <!-- About -->
+          <section class="settings-card pad" id="secAbout">
+            <h3 class="section-title">About</h3>
+
+            <div class="about-head">
+              <div class="app-icon big">
+                <img src="icon.png" alt="" />
+              </div>
+              <div>
+                <h2 class="about-name">Audio Enhancer</h2>
+                <p class="about-sub">
+                  Version <span id="aboutVersion">1.0.0</span>
+                </p>
+              </div>
+            </div>
+
+            <p class="about-text">
+              A system-wide sound enhancer for Windows. It routes your audio
+              through a virtual device, applies the effect, volume, bass and
+              treble you choose, and plays it on your real speakers or
+              headphones.
+            </p>
+
+            <div class="link-list">
+              <button
+                type="button"
+                class="link"
+                data-url="https://github.com/mahfuz0712/audioEnhancer"
+              >
+                <span>GitHub repository</span><span class="arrow">↗</span>
+              </button>
+              <button
+                type="button"
+                class="link"
+                data-url="https://github.com/mahfuz0712/audioEnhancer/releases"
+              >
+                <span>Releases &amp; changelog</span
+                ><span class="arrow">↗</span>
+              </button>
+              <button
+                type="button"
+                class="link"
+                data-url="https://github.com/mahfuz0712/audioEnhancer/issues"
+              >
+                <span>Report a problem</span><span class="arrow">↗</span>
+              </button>
+              <button
+                type="button"
+                class="link"
+                data-url="https://vb-audio.com/Cable/"
+              >
+                <span>VB-CABLE virtual audio device (VB-Audio)</span
+                ><span class="arrow">↗</span>
+              </button>
+            </div>
+
+            <p class="about-foot">Made by Mohammad Mahfuz Rahman</p>
+          </section>
+        </div>
+      </main>
+
+      <!-- Footer -->
+      <footer>
+        <span>Audio Enhancer</span>
+        <span id="footerHint">Double-click a slider to reset it</span>
+        <span id="footerVersion">v1.0.0</span>
+      </footer>
     </div>
 
-
     <script src="script.js"></script>
-
-</body>
+  </body>
 </html>
