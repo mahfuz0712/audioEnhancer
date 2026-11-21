@@ -3,6 +3,7 @@
     "description": "A tool for enhancing audio quality",
     "category": "Utilities",
     "ageRating": "3+",
+    "version": "1.0.3",
     "author": "Mohammad Mahfuz Rahman",
     "type": "app",
     "isPaid": false,

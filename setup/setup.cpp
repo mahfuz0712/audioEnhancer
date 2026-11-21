@@ -21,15 +21,15 @@
 #include <thread>
 #include <vector>
 
-#include "audio_engine.h"  // enumerateOutputDevices() - used to detect an installed cable
+#include "headers/audio_engine.h"  // enumerateOutputDevices() - used to detect an installed cable
 
 // Official download (VB-Audio, driver pack 45). Update this if VB-Audio publishes a newer pack.
 static const wchar_t* kCableUrl = L"https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip";
 static const wchar_t* kAppName = L"Audio Enhancer";
-static const wchar_t* kAppVersion = L"1.0.0";
+static const wchar_t* kAppVersion = L"1.0.3";
 static const wchar_t* kUninstallKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AudioEnhancer";
 
-enum { RES_EXE = 101, RES_LOADER, RES_HTML, RES_CSS, RES_JS, RES_ICON };
+enum { RES_EXE = 101 };
 enum { WM_STATUS = WM_APP + 1, WM_FINISHED = WM_APP + 2 };
 
 static HWND g_wnd = nullptr, g_label = nullptr, g_bar = nullptr;
@@ -187,15 +187,13 @@ static void installWorker() {
 
     const std::wstring dir = installDir();
     step(5, L"Preparing...");
-    makeDirs(dir + L"\\ui");
+    makeDirs(dir);
 
     // 1) application files
     step(10, L"Copying application files...");
     struct Item { int id; std::wstring rel; };
     const Item items[] = {
-        {RES_EXE, L"\\AudioEnhancer.exe"},     {RES_LOADER, L"\\WebView2Loader.dll"},
-        {RES_HTML, L"\\ui\\index.html"},       {RES_CSS, L"\\ui\\style.css"},
-        {RES_JS, L"\\ui\\script.js"},          {RES_ICON, L"\\ui\\icon.png"},
+        {RES_EXE, L"\\AudioEnhancer.exe"},
     };
     for (const auto& it : items) {
         if (!writeResource(it.id, dir + it.rel)) {

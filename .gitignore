@@ -1,7 +1,22 @@
 VBCABLE_Driver_Pack45
 AudioEnhancer.iss
 libs/
-.vscode/
-build/
-dist/
+
+
+
+
+
+# Build output
+/build/
+/dist/
 release/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

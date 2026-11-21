@@ -1,0 +1,7 @@
+#include <windows.h>
+
+1 24 "../../setup/setup.manifest"
+1 ICON "../assets/app.ico"
+
+// Payload embedded in the Qt installer
+101 RCDATA "../../dist/Windows/AudioEnhancer.exe"

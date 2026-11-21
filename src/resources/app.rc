@@ -1,11 +1,11 @@
 #include <windows.h>
-#include "version.h"
+#include "../version.h"
 
 // Application icon (used by Explorer, taskbar, window title bar)
-1 ICON "assets/app.ico"
+1 ICON "../assets/app.ico"
 
 // Dimmed icon used by the system tray while the enhancer is off
-2 ICON "assets/app_off.ico"
+2 ICON "../assets/app_off.ico"
 
 // Version info (shown in the exe's Properties > Details; AudioEnhancer.iss reads ProductVersion from here)
 VS_VERSION_INFO VERSIONINFO
