@@ -78,10 +78,12 @@ find_program(INNO_SETUP_COMPILER iscc HINTS
 
 if(INNO_SETUP_COMPILER)
     add_custom_target(InnoSetup
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                "${CMAKE_CURRENT_SOURCE_DIR}/setup/output"
         COMMAND "${INNO_SETUP_COMPILER}"
                 "/DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
                 "/DAPP_DIR=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
-                "/DOUTPUT_DIR=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+                "/DOUTPUT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/setup/output"
                 "${CMAKE_CURRENT_SOURCE_DIR}/setup/setup.iss"
         DEPENDS AudioEnhancer
         COMMENT "Building AudioEnhancer-Setup.exe with Inno Setup"

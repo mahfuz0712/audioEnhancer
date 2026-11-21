@@ -47,7 +47,7 @@ Build the installer:
 cmake --build --preset windows-release --target InnoSetup
 ```
 
-The installer is written to `dist/Windows/AudioEnhancer-Setup.exe`.
+The installer is written to `setup/output/AudioEnhancer-Setup.exe`.
 
 ## Run
 
