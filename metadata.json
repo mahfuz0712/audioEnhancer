@@ -2,11 +2,21 @@
     "name": "Audio Enhancer",
     "description": "A tool for enhancing audio quality",
     "category": "Utilities",
+    "platforms": ["Windows", "macOS", "Linux", "Android", "iOS"],
     "ageRating": "3+",
     "version": "1.0.4",
     "author": "Mohammad Mahfuz Rahman",
     "type": "app",
     "isPaid": false,
     "containsAds": false,
-    "license": "Proprietary"
+    "license": "Proprietary",
+    "commands": {
+        "build-windows": "cmake --preset windows-release && cmake --build . --preset windows-release",
+        "build-windows-setup": "cmake --build --preset windows-release --target InnoSetup",
+        "build-macos": "cmake --preset macos-release && cmake --build . --preset macos-release",
+        "build-linux": "cmake --preset linux-release && cmake --build . --preset linux-release",
+        "build-android": "cmake --preset android-release && cmake --build . --preset android-release",
+        "build-ios": "cmake --preset ios-release && cmake --build . --preset ios-release"
+    }
+
 }
