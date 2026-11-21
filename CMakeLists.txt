@@ -16,6 +16,8 @@ endif()
 list(GET AE_VERSION_PARTS 0 AE_VERSION_MAJOR)
 list(GET AE_VERSION_PARTS 1 AE_VERSION_MINOR)
 list(GET AE_VERSION_PARTS 2 AE_VERSION_PATCH)
+string(REPLACE " " "-" AE_APP_SLUG "${AE_APP_NAME}")
+set(AE_APP_ARCH "x64")
 
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
 file(WRITE "${CMAKE_BINARY_DIR}/generated/version.h"
@@ -117,6 +119,8 @@ if(INNO_SETUP_COMPILER)
                 "/DOUTPUT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/setup/output"
                 "/DAPP_VERSION=${AE_APP_VERSION}"
                 "/DAPP_NAME=${AE_APP_NAME}"
+                "/DAPP_SLUG=${AE_APP_SLUG}"
+                "/DAPP_ARCH=${AE_APP_ARCH}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/setup/setup.iss"
         DEPENDS AudioEnhancer
         COMMENT "Building AudioEnhancer-Setup.exe with Inno Setup"
