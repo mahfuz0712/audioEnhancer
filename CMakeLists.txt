@@ -71,32 +71,24 @@ else()
     target_compile_options(AudioEnhancer PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-add_executable(AudioEnhancerSetup WIN32
-    setup/setup.cpp
-    src/resources/setup.rc
+find_program(INNO_SETUP_COMPILER iscc HINTS
+    "C:/Program Files (x86)/Inno Setup 6"
+    "C:/Program Files/Inno Setup 6"
 )
 
-target_include_directories(AudioEnhancerSetup PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/headers"
-)
-
-target_link_libraries(AudioEnhancerSetup PRIVATE
-    ole32
-    oleaut32
-    uuid
-    winmm
-    comctl32
-    urlmon
-    shell32
-    advapi32
-    user32
-    gdi32
-)
-
-set_target_properties(AudioEnhancerSetup PROPERTIES
-    OUTPUT_NAME "AudioEnhancer-Setup"
-)
-
-target_compile_definitions(AudioEnhancerSetup PRIVATE UNICODE _UNICODE)
-add_dependencies(AudioEnhancerSetup AudioEnhancer)
+if(INNO_SETUP_COMPILER)
+    add_custom_target(InnoSetup
+        COMMAND "${INNO_SETUP_COMPILER}"
+                "/DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+                "/DAPP_DIR=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+                "/DOUTPUT_DIR=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/setup/setup.iss"
+        DEPENDS AudioEnhancer
+        COMMENT "Building AudioEnhancer-Setup.exe with Inno Setup"
+    )
+else()
+    add_custom_target(InnoSetup
+        COMMAND ${CMAKE_COMMAND} -E echo
+                "Inno Setup 6 is not installed. Install ISCC and build again."
+    )
+endif()

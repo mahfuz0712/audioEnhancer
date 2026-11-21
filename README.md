@@ -44,7 +44,7 @@ The executable is written to `dist/Windows/AudioEnhancer.exe`.
 Build the installer:
 
 ```bash
-cmake --build --preset windows-release --target AudioEnhancerSetup
+cmake --build --preset windows-release --target InnoSetup
 ```
 
 The installer is written to `dist/Windows/AudioEnhancer-Setup.exe`.
