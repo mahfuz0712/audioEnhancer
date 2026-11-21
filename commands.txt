@@ -1,0 +1,124 @@
+Audio Enhancer - Build and Management Commands
+
+Requirements:
+- Windows 10/11
+- CMake 3.25+
+- Ninja
+- MSYS2 UCRT64 with GCC
+- Qt 6 Widgets and Qt 6 Network
+- Inno Setup 6
+
+
+Project root-e MSYS2 UCRT64 terminal kholo.
+
+1. Configure Release build:
+cmake --preset windows-release
+
+2. Build Release application:
+cmake --build --preset windows-release
+
+3. Configure Debug build:
+cmake --preset windows-debug
+
+4. Build Debug application:
+cmake --build --preset windows-debug
+
+5. Run application:
+./dist/Windows/AudioEnhancer.exe
+
+6. Run application in system tray:
+./dist/Windows/AudioEnhancer.exe --tray
+
+7. Build Inno Setup installer:
+cmake --build --preset windows-release --target InnoSetup
+
+Installer location:
+setup/output/AudioEnhancer-Setup.exe
+
+8. Run installer:
+./setup/output/AudioEnhancer-Setup.exe
+
+Installed application location:
+C:\Program Files\Audio Enhancer\AudioEnhancer.exe
+
+9. Run installed application:
+& "$env:ProgramFiles\Audio Enhancer\AudioEnhancer.exe"
+
+10. Run installed application in system tray:
+& "$env:ProgramFiles\Audio Enhancer\AudioEnhancer.exe" --tray
+
+
+Uninstall
+
+11. Windows Settings:
+Settings -> Apps -> Installed apps -> Audio Enhancer -> Uninstall
+
+12. Start Menu:
+Start -> Audio Enhancer -> Uninstall Audio Enhancer
+
+13. Direct Inno Setup uninstaller:
+& "$env:ProgramFiles\Audio Enhancer\unins000.exe"
+
+14. Directly run the packaged cleanup script:
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:ProgramFiles\Audio Enhancer\uninstall.ps1"
+
+
+Manual cleanup and verification
+
+15. Stop Audio Enhancer:
+Stop-Process -Name AudioEnhancer -Force
+
+16. Remove app installation folder:
+Remove-Item -LiteralPath "$env:ProgramFiles\Audio Enhancer" -Recurse -Force
+
+17. Remove current app cache/settings folder:
+Remove-Item -LiteralPath "$env:LOCALAPPDATA\AudioEnhancer" -Recurse -Force
+
+18. Remove app temp folders:
+Remove-Item -LiteralPath "$env:TEMP\AudioEnhancer" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath "$env:TEMP\AudioEnhancerSetup" -Recurse -Force -ErrorAction SilentlyContinue
+
+19. Remove startup registry value:
+Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "AudioEnhancer" -ErrorAction SilentlyContinue
+
+20. Remove app registry keys:
+Remove-Item -Path "HKCU:\Software\AudioEnhancer" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "HKLM:\Software\AudioEnhancer" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AudioEnhancer" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\AudioEnhancer" -Recurse -Force -ErrorAction SilentlyContinue
+
+21. Remove Desktop shortcut:
+Remove-Item -LiteralPath "$env:USERPROFILE\Desktop\Audio Enhancer.lnk" -Force -ErrorAction SilentlyContinue
+
+22. Remove common Desktop shortcut:
+Remove-Item -LiteralPath "$env:PUBLIC\Desktop\Audio Enhancer.lnk" -Force -ErrorAction SilentlyContinue
+
+23. Remove Start Menu shortcut:
+Remove-Item -LiteralPath "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Audio Enhancer.lnk" -Force -ErrorAction SilentlyContinue
+
+
+Installer source files
+
+setup/setup.iss
+- Main Inno Setup installer and uninstaller script
+
+setup/vbcable.ps1
+- Detects and installs VB-Cable
+
+setup/uninstall.ps1
+- Complete app and setup-installed VB-Cable cleanup
+
+setup/LICENSE.txt
+- License text shown by the installer
+
+
+Clean build folders
+
+24. Remove build folders:
+Remove-Item -LiteralPath "build" -Recurse -Force
+
+25. Remove output executables:
+Remove-Item -LiteralPath "dist" -Recurse -Force
+
+26. Remove generated installer:
+Remove-Item -LiteralPath "setup/output" -Recurse -Force

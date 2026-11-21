@@ -1,12 +1,6 @@
-
-
-
-
-
-
 # Build output
-/build/
-/dist/
+build/
+dist/
 release/
 setup/
 
