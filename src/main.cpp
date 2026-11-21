@@ -492,17 +492,9 @@ private:
 
         auto* appSettings = new QGroupBox("Application");
         auto* appLayout = new QVBoxLayout(appSettings);
-        auto* autostartToggle = new QCheckBox("Start with Windows");
-        {
-            QSettings registry(
-                "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                QSettings::NativeFormat);
-            autostartToggle->setChecked(registry.contains("AudioEnhancer"));
-        }
-        connect(autostartToggle, &QCheckBox::toggled, this, [this](bool checked) {
-            setAutostart(checked);
-        });
-        appLayout->addWidget(autostartToggle);
+        auto* autostartLabel = new QLabel("Startup: Enabled for all Windows users");
+        autostartLabel->setEnabled(false);
+        appLayout->addWidget(autostartLabel);
 
         checkUpdatesToggle_ = new QCheckBox("Automatically check for updates");
         checkUpdatesToggle_->setChecked(checkUpdates_);
@@ -791,17 +783,6 @@ private:
         return slider;
     }
 
-    void setAutostart(bool enabled)
-    {
-        QSettings registry(
-            "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-            QSettings::NativeFormat);
-        if (enabled)
-            registry.setValue("AudioEnhancer", QString("\"%1\" --tray").arg(QCoreApplication::applicationFilePath()));
-        else
-            registry.remove("AudioEnhancer");
-    }
-
     void buildTray()
     {
         tray_.setIcon(QIcon(":/app-off.ico"));
@@ -821,17 +802,6 @@ private:
             setPower(checked);
         });
 
-        auto* autostartAction = menu->addAction("Start with Windows");
-        autostartAction->setCheckable(true);
-        {
-            QSettings registry(
-                "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
-                QSettings::NativeFormat);
-            autostartAction->setChecked(registry.contains("AudioEnhancer"));
-        }
-        connect(autostartAction, &QAction::triggered, this, [this](bool checked) {
-            setAutostart(checked);
-        });
 
         menu->addSeparator();
         auto* exitAction = menu->addAction("Exit");
