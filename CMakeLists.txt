@@ -1,7 +1,35 @@
 cmake_minimum_required(VERSION 3.25)
 
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/metadata.json" AE_METADATA_JSON)
+string(JSON AE_APP_NAME GET "${AE_METADATA_JSON}" name)
+string(JSON AE_APP_VERSION GET "${AE_METADATA_JSON}" version)
+
+if(AE_APP_NAME STREQUAL "" OR AE_APP_VERSION STREQUAL "")
+    message(FATAL_ERROR "metadata.json must contain name and version")
+endif()
+
+string(REPLACE "." ";" AE_VERSION_PARTS "${AE_APP_VERSION}")
+list(LENGTH AE_VERSION_PARTS AE_VERSION_PART_COUNT)
+if(NOT AE_VERSION_PART_COUNT EQUAL 3)
+    message(FATAL_ERROR "metadata.json version must use MAJOR.MINOR.PATCH format")
+endif()
+list(GET AE_VERSION_PARTS 0 AE_VERSION_MAJOR)
+list(GET AE_VERSION_PARTS 1 AE_VERSION_MINOR)
+list(GET AE_VERSION_PARTS 2 AE_VERSION_PATCH)
+
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/generated")
+file(WRITE "${CMAKE_BINARY_DIR}/generated/version.h"
+"// Generated from metadata.json. Do not edit manually.\n"
+"#pragma once\n"
+"#define APP_NAME_STR \"${AE_APP_NAME}\"\n"
+"#define APP_VERSION_MAJOR ${AE_VERSION_MAJOR}\n"
+"#define APP_VERSION_MINOR ${AE_VERSION_MINOR}\n"
+"#define APP_VERSION_PATCH ${AE_VERSION_PATCH}\n"
+"#define APP_VERSION_STR \"${AE_APP_VERSION}\"\n"
+)
+
 project(AudioEnhancer
-    VERSION 1.0.3
+    VERSION "${AE_APP_VERSION}"
     DESCRIPTION "WASAPI audio enhancer with a native Qt 6 interface"
     LANGUAGES CXX
 )
@@ -20,6 +48,8 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/dist/Windows")
 
 add_executable(AudioEnhancer WIN32
     src/main.cpp
+    src/headers/audio_engine.h
+    src/headers/dsp.h
     src/resources/app.rc
     src/resources.qrc
 )
@@ -32,6 +62,7 @@ set_property(SOURCE src/resources/app.rc APPEND PROPERTY OBJECT_DEPENDS
 target_include_directories(AudioEnhancer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/headers"
+    "${CMAKE_BINARY_DIR}/generated"
 )
 
 target_link_libraries(AudioEnhancer PRIVATE
@@ -84,6 +115,8 @@ if(INNO_SETUP_COMPILER)
                 "/DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
                 "/DAPP_DIR=${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
                 "/DOUTPUT_DIR=${CMAKE_CURRENT_SOURCE_DIR}/setup/output"
+                "/DAPP_VERSION=${AE_APP_VERSION}"
+                "/DAPP_NAME=${AE_APP_NAME}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/setup/setup.iss"
         DEPENDS AudioEnhancer
         COMMENT "Building AudioEnhancer-Setup.exe with Inno Setup"

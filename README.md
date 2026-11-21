@@ -66,7 +66,7 @@ To start directly in the system tray:
 - `src/main.cpp` — Qt application, settings, tray, and WASAPI integration
 - `src/headers/audio_engine.h` — WASAPI capture/render engine
 - `src/headers/dsp.h` — spatializer and tone-control DSP
-- `src/app.rc` — Windows application icon and version metadata
+- `src/resources/app.rc` — Windows application icon and version metadata
 - `src/assets/` — application icons
 - `build/` — CMake/Ninja build trees
 - `dist/Windows/` — generated executable
