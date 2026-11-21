@@ -41,6 +41,14 @@ cmake --build --preset windows-debug
 
 The executable is written to `dist/Windows/AudioEnhancer.exe`.
 
+Build the installer:
+
+```bash
+cmake --build --preset windows-release --target AudioEnhancerSetup
+```
+
+The installer is written to `dist/Windows/AudioEnhancer-Setup.exe`.
+
 ## Run
 
 ```bash

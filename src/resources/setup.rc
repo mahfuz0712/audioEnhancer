@@ -5,3 +5,10 @@
 
 // Payload embedded in the Qt installer
 101 RCDATA "../../dist/Windows/AudioEnhancer.exe"
+201 RCDATA "../../dist/Windows/Qt6Core.dll"
+202 RCDATA "../../dist/Windows/Qt6Gui.dll"
+203 RCDATA "../../dist/Windows/Qt6Widgets.dll"
+204 RCDATA "../../dist/Windows/Qt6Network.dll"
+208 RCDATA "../../dist/Windows/platforms/qwindows.dll"
+209 RCDATA "../../dist/Windows/tls/qcertonlybackend.dll"
+210 RCDATA "../../dist/Windows/tls/qschannelbackend.dll"

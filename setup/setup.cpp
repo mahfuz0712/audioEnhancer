@@ -29,13 +29,24 @@ static const wchar_t* kAppName = L"Audio Enhancer";
 static const wchar_t* kAppVersion = L"1.0.3";
 static const wchar_t* kUninstallKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AudioEnhancer";
 
-enum { RES_EXE = 101 };
+enum {
+    RES_EXE = 101,
+    RES_QT_CORE = 201, RES_QT_GUI, RES_QT_WIDGETS, RES_QT_NETWORK,
+    RES_QT_WINDOWS_PLUGIN = 208, RES_QT_CERT_TLS, RES_QT_SCHANNEL_TLS
+};
 enum { WM_STATUS = WM_APP + 1, WM_FINISHED = WM_APP + 2 };
+enum { ID_ACCEPT = 3001, ID_INSTALL = 3002, ID_CANCEL = 3003,
+       ID_DESKTOP = 3004, ID_START_MENU = 3005, ID_LAUNCH = 3006 };
 
 static HWND g_wnd = nullptr, g_label = nullptr, g_bar = nullptr;
 static std::thread g_worker;
 static bool g_finished = false, g_ok = false, g_needReboot = false;
 static std::wstring g_error, g_warning;
+static bool g_createDesktop = true;
+static bool g_createStartMenu = true;
+static bool g_launchAfterInstall = true;
+static HWND g_license = nullptr, g_desktop = nullptr, g_startMenu = nullptr, g_launch = nullptr;
+static HWND g_accept = nullptr, g_cancel = nullptr, g_install = nullptr;
 
 // ------------------------------------------------------------------ helpers
 static std::wstring programFilesDir() {
@@ -157,7 +168,10 @@ static bool cableInstalled() {
     return false;
 }
 
-static bool appIsRunning() { return FindWindowW(L"AudioEnhancerWnd", nullptr) != nullptr; }
+static bool appIsRunning() {
+    return FindWindowW(L"AudioEnhancerWnd", nullptr) != nullptr ||
+           FindWindowW(L"QWidget", L"Audio Enhancer") != nullptr;
+}
 
 static void rebootNow() {
     HANDLE tok = nullptr;
@@ -188,12 +202,21 @@ static void installWorker() {
     const std::wstring dir = installDir();
     step(5, L"Preparing...");
     makeDirs(dir);
+    makeDirs(dir + L"\\platforms");
+    makeDirs(dir + L"\\tls");
 
     // 1) application files
     step(10, L"Copying application files...");
     struct Item { int id; std::wstring rel; };
     const Item items[] = {
         {RES_EXE, L"\\AudioEnhancer.exe"},
+        {RES_QT_CORE, L"\\Qt6Core.dll"},
+        {RES_QT_GUI, L"\\Qt6Gui.dll"},
+        {RES_QT_WIDGETS, L"\\Qt6Widgets.dll"},
+        {RES_QT_NETWORK, L"\\Qt6Network.dll"},
+        {RES_QT_WINDOWS_PLUGIN, L"\\platforms\\qwindows.dll"},
+        {RES_QT_CERT_TLS, L"\\tls\\qcertonlybackend.dll"},
+        {RES_QT_SCHANNEL_TLS, L"\\tls\\qschannelbackend.dll"},
     };
     for (const auto& it : items) {
         if (!writeResource(it.id, dir + it.rel)) {
@@ -207,8 +230,10 @@ static void installWorker() {
     // 2) shortcuts + uninstall entry
     step(30, L"Creating shortcuts...");
     const std::wstring exe = dir + L"\\AudioEnhancer.exe";
-    createShortcut(specialDir(CSIDL_COMMON_PROGRAMS) + L"\\" + kAppName + L".lnk", exe, dir);
-    createShortcut(specialDir(CSIDL_COMMON_DESKTOPDIRECTORY) + L"\\" + kAppName + L".lnk", exe, dir);
+    if (g_createStartMenu)
+        createShortcut(specialDir(CSIDL_COMMON_PROGRAMS) + L"\\" + kAppName + L".lnk", exe, dir);
+    if (g_createDesktop)
+        createShortcut(specialDir(CSIDL_COMMON_DESKTOPDIRECTORY) + L"\\" + kAppName + L".lnk", exe, dir);
 
     step(40, L"Registering uninstaller...");
     HKEY k = nullptr;
@@ -289,6 +314,22 @@ static int runUninstall() {
     DeleteFileW((specialDir(CSIDL_COMMON_DESKTOPDIRECTORY) + L"\\" + kAppName + L".lnk").c_str());
     RegDeleteKeyExW(HKEY_LOCAL_MACHINE, kUninstallKey, KEY_WOW64_64KEY, 0);
 
+    HKEY runKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_SET_VALUE, &runKey) == ERROR_SUCCESS) {
+        RegDeleteValueW(runKey, kAppName);
+        RegCloseKey(runKey);
+    }
+
+    wchar_t local[MAX_PATH] = {};
+    if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, local))) {
+        removeTree(std::wstring(local) + L"\\AudioEnhancer");
+    }
+    wchar_t temp[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, temp))
+        removeTree(std::wstring(temp) + L"AudioEnhancerSetup");
+
     // This exe is running from the install folder, so let a detached cmd delete the folder after we exit.
     std::wstring cmd = L"cmd.exe /c ping 127.0.0.1 -n 3 > nul & rmdir /s /q \"" + dir + L"\"";
     STARTUPINFOW si = {};
@@ -306,6 +347,33 @@ static int runUninstall() {
 // ------------------------------------------------------------------ progress window
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+        case WM_COMMAND:
+            switch (LOWORD(wp)) {
+                case ID_ACCEPT:
+                    EnableWindow(g_install, IsDlgButtonChecked(hwnd, ID_ACCEPT) == BST_CHECKED);
+                    break;
+                case ID_INSTALL:
+                    if (IsDlgButtonChecked(hwnd, ID_ACCEPT) != BST_CHECKED)
+                        break;
+                    g_createDesktop = IsDlgButtonChecked(hwnd, ID_DESKTOP) == BST_CHECKED;
+                    g_createStartMenu = IsDlgButtonChecked(hwnd, ID_START_MENU) == BST_CHECKED;
+                    g_launchAfterInstall = IsDlgButtonChecked(hwnd, ID_LAUNCH) == BST_CHECKED;
+                    ShowWindow(g_license, SW_HIDE);
+                    ShowWindow(g_desktop, SW_HIDE);
+                    ShowWindow(g_startMenu, SW_HIDE);
+                    ShowWindow(g_launch, SW_HIDE);
+                    ShowWindow(g_accept, SW_HIDE);
+                    ShowWindow(g_install, SW_HIDE);
+                    ShowWindow(g_cancel, SW_HIDE);
+                    ShowWindow(g_label, SW_SHOW);
+                    ShowWindow(g_bar, SW_SHOW);
+                    g_worker = std::thread(installWorker);
+                    break;
+                case ID_CANCEL:
+                    if (g_finished) DestroyWindow(hwnd);
+                    break;
+            }
+            return 0;
         case WM_STATUS: {
             std::wstring* t = reinterpret_cast<std::wstring*>(lp);
             SetWindowTextW(g_label, t->c_str());
@@ -342,16 +410,6 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         MessageBoxW(nullptr, L"Please close Audio Enhancer first, then run setup again.", kAppName, MB_ICONINFORMATION);
         return 1;
     }
-    if (MessageBoxW(nullptr,
-                    L"This will install Audio Enhancer.\n\n"
-                    L"If the virtual audio device (VB-Cable) is not installed yet, setup will download it from "
-                    L"vb-audio.com and install it. Windows will ask you to confirm the driver, and a restart "
-                    L"is needed afterwards.\n\nContinue?",
-                    L"Audio Enhancer Setup", MB_YESNO | MB_ICONQUESTION) != IDYES) {
-        CoUninitialize();
-        return 0;
-    }
-
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
@@ -370,7 +428,7 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
     auto S = [s](int v) { return (int)(v * s); };
 
     const DWORD style = WS_CAPTION | WS_SYSMENU;
-    RECT r = {0, 0, S(460), S(120)};
+    RECT r = {0, 0, S(600), S(430)};
     AdjustWindowRect(&r, style, FALSE);
     const int w = r.right - r.left, h = r.bottom - r.top;
     g_wnd = CreateWindowExW(0, wc.lpszClassName, L"Audio Enhancer Setup", style,
@@ -378,10 +436,46 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
                             nullptr, nullptr, hInst, nullptr);
 
     HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
-    g_label = CreateWindowExW(0, L"STATIC", L"Starting...", WS_CHILD | WS_VISIBLE | SS_LEFT, S(20), S(18), S(420),
-                              S(40), g_wnd, nullptr, hInst, nullptr);
+    CreateWindowExW(0, L"STATIC", L"Audio Enhancer Setup", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                    S(20), S(16), S(560), S(30), g_wnd, nullptr, hInst, nullptr);
+    g_license = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT",
+        L"Audio Enhancer License Agreement\r\n\r\n"
+        L"1. This software is provided as-is.\r\n"
+        L"2. VB-Cable is a separate third-party virtual audio driver.\r\n"
+        L"3. Installation may download and install VB-Cable if it is not already present.\r\n"
+        L"4. Windows may require a device-driver approval prompt.\r\n"
+        L"5. Restarting Windows may be required after the first VB-Cable installation.\r\n\r\n"
+        L"By continuing, you accept these terms and authorize setup to install the application.",
+        WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
+        S(20), S(55), S(560), S(180), g_wnd, nullptr, hInst, nullptr);
+
+    g_desktop = CreateWindowExW(0, L"BUTTON", L"Create Desktop shortcut",
+                                WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                S(22), S(250), S(260), S(22), g_wnd, (HMENU)ID_DESKTOP, hInst, nullptr);
+    SendMessageW(g_desktop, BM_SETCHECK, BST_CHECKED, 0);
+    g_startMenu = CreateWindowExW(0, L"BUTTON", L"Create Start Menu shortcut",
+                                  WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                                  S(22), S(278), S(260), S(22), g_wnd, (HMENU)ID_START_MENU, hInst, nullptr);
+    SendMessageW(g_startMenu, BM_SETCHECK, BST_CHECKED, 0);
+    g_launch = CreateWindowExW(0, L"BUTTON", L"Launch Audio Enhancer when setup finishes",
+                               WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                               S(22), S(306), S(400), S(22), g_wnd, (HMENU)ID_LAUNCH, hInst, nullptr);
+    SendMessageW(g_launch, BM_SETCHECK, BST_CHECKED, 0);
+    g_accept = CreateWindowExW(0, L"BUTTON", L"I accept the license agreement",
+                               WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+                               S(22), S(338), S(300), S(22), g_wnd, (HMENU)ID_ACCEPT, hInst, nullptr);
+
+    g_cancel = CreateWindowExW(0, L"BUTTON", L"Cancel",
+                               WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                               S(390), S(370), S(90), S(28), g_wnd, (HMENU)ID_CANCEL, hInst, nullptr);
+    g_install = CreateWindowExW(0, L"BUTTON", L"Install",
+                               WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | WS_DISABLED,
+                               S(490), S(370), S(90), S(28), g_wnd, (HMENU)ID_INSTALL, hInst, nullptr);
+
+    g_label = CreateWindowExW(0, L"STATIC", L"Starting...", WS_CHILD | SS_LEFT,
+                              S(20), S(18), S(560), S(40), g_wnd, nullptr, hInst, nullptr);
     SendMessageW(g_label, WM_SETFONT, (WPARAM)font, TRUE);
-    g_bar = CreateWindowExW(0, PROGRESS_CLASSW, nullptr, WS_CHILD | WS_VISIBLE, S(20), S(70), S(420), S(18), g_wnd,
+    g_bar = CreateWindowExW(0, PROGRESS_CLASSW, nullptr, WS_CHILD, S(20), S(70), S(560), S(18), g_wnd,
                             nullptr, hInst, nullptr);
     SendMessageW(g_bar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
 
@@ -403,11 +497,19 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE, LPSTR, int) {
         std::wstring msg = L"Audio Enhancer was installed successfully.\n";
         if (!g_warning.empty()) msg += L"\n" + g_warning + L"\n";
         if (g_needReboot) {
-            msg += L"\nA restart is required to finish installing the virtual audio driver.\nRestart now?";
-            if (MessageBoxW(nullptr, msg.c_str(), L"Audio Enhancer Setup", MB_YESNO | MB_ICONINFORMATION) == IDYES)
+            msg += L"\nA restart is required to finish installing the VB-Cable virtual audio driver.";
+            int choice = MessageBoxW(nullptr,
+                                     (msg + L"\n\nRestart now?").c_str(),
+                                     L"Audio Enhancer Setup",
+                                     MB_YESNO | MB_ICONQUESTION);
+            if (choice == IDYES)
                 rebootNow();
         } else {
             MessageBoxW(nullptr, msg.c_str(), L"Audio Enhancer Setup", MB_OK | MB_ICONINFORMATION);
+        }
+        if (g_launchAfterInstall && !g_needReboot) {
+            std::wstring exe = installDir() + L"\\AudioEnhancer.exe";
+            ShellExecuteW(nullptr, L"open", exe.c_str(), nullptr, installDir().c_str(), SW_SHOWNORMAL);
         }
     }
     CoUninitialize();

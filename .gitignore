@@ -1,6 +1,4 @@
-VBCABLE_Driver_Pack45
-AudioEnhancer.iss
-libs/
+
 
 
 
@@ -10,6 +8,7 @@ libs/
 /build/
 /dist/
 release/
+setup/
 
 # IDE/editor
 .vscode/

@@ -54,6 +54,17 @@ set_target_properties(AudioEnhancer PROPERTIES
     WIN32_EXECUTABLE ON
 )
 
+find_program(WINDEPLOYQT_EXECUTABLE windeployqt6 HINTS "C:/msys64/ucrt64/bin")
+if(WINDEPLOYQT_EXECUTABLE)
+    add_custom_command(TARGET AudioEnhancer POST_BUILD
+        COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                --compiler-runtime --no-translations --no-opengl-sw
+                --dir "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+                "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/AudioEnhancer.exe"
+        COMMENT "Deploying Qt 6 runtime beside AudioEnhancer.exe"
+    )
+endif()
+
 if(MSVC)
     target_compile_options(AudioEnhancer PRIVATE /W4 /permissive-)
 else()
